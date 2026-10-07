@@ -268,7 +268,7 @@ def run_natural_language_query(
     if not llm:
         return handle_fallback_query(user_question, db_path)
 
-    chain = create_sql_query_chain(llm, db)
+    chain = create_sql_query_chain(llm, db, k=100) 
 
     while attempts <= max_retries:
         try:
