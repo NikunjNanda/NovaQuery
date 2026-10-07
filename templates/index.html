@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NovaQuery AI Engine</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- html2pdf.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans flex flex-col">
+
+    <!-- Top Navigation / Header -->
+    <header class="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="bg-indigo-600 text-white p-2 rounded-lg font-bold text-lg">NQ</div>
+                <h1 class="text-xl font-bold tracking-tight text-white">NovaQuery <span class="text-indigo-400 text-sm font-normal">AI Engine</span></h1>
+            </div>
+
+            <!-- Active Database Selector & Uploader Control -->
+            <div class="flex items-center space-x-3 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700">
+                <span class="text-xs font-semibold text-slate-400">Active DB:</span>
+                <span id="activeDbBadge" class="text-xs font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-800">
+                    company.db
+                </span>
+                
+                <!-- Hidden File Input -->
+                <input type="file" id="dbFileInput" accept=".db,.sqlite" class="hidden" onchange="handleFileUpload(event)">
+                
+                <!-- Upload Button -->
+                <button onclick="document.getElementById('dbFileInput').click()" 
+                        class="text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-2.5 py-1 rounded transition flex items-center space-x-1">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 3 0 003 3h10a3 3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                    </svg>
+                    <span>Upload .db</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="max-w-7xl mx-auto px-4 py-6 flex-grow flex flex-col space-y-6 w-full">
+
+        <!-- Input Query Box Section -->
+        <section class="bg-slate-800/50 p-4 rounded-xl border border-slate-700/60 shadow-lg">
+            <label for="questionInput" class="block text-sm font-medium text-slate-300 mb-2">Ask a Question in Natural Language</label>
+            <div class="flex gap-3">
+                <input type="text" id="questionInput" 
+                       placeholder="e.g., Show top 5 customers by total order amount..." 
+                       class="flex-grow bg-slate-900 border border-slate-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-white placeholder-slate-500"
+                       onkeydown="if(event.key === 'Enter') submitQuery()">
+                <button onclick="submitQuery()" id="btnSubmit" 
+                        class="bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-6 py-2.5 rounded-lg transition flex items-center justify-center min-w-[120px]">
+                    <span id="btnText">Run Query</span>
+                    <svg id="btnSpinner" class="animate-spin h-4 w-4 text-white hidden ml-2" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                </button>
+            </div>
+        </section>
+
+        <!-- Dynamic Results Workspace Container -->
+        <div id="resultsWrapper" class="hidden space-y-6">
+
+            <!-- Toolbar & Export Controls -->
+            <div class="flex justify-between items-center bg-slate-800/40 px-4 py-2.5 rounded-lg border border-slate-700/50">
+                <div class="flex items-center space-x-2 text-xs text-slate-400">
+                    <span>Status: <strong class="text-emerald-400">Success</strong></span>
+                    <span>•</span>
+                    <span id="attemptsBadge" class="bg-slate-700 text-slate-200 px-2 py-0.5 rounded">Attempts: 1</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="copySql()" class="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-slate-200 transition">Copy SQL</button>
+                    <button onclick="exportCSV()" class="text-xs bg-slate-700 hover:bg-slate-600 px-3 py-1.5 rounded text-slate-200 transition">Export CSV</button>
+                    <button onclick="exportPDF()" class="text-xs bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 rounded text-white font-medium transition">Download PDF Report</button>
+                </div>
+            </div>
+
+            <!-- PDF Container Target -->
+            <div id="pdfExportContainer" class="space-y-6 bg-slate-900 p-2 rounded-lg">
+                
+                <!-- Generated SQL Display Card -->
+                <section class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+                    <h2 class="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">Generated Executable SQL</h2>
+                    <pre id="sqlOutput" class="text-xs font-mono text-indigo-300 bg-slate-900 p-3 rounded border border-slate-800/80 whitespace-pre-wrap break-all overflow-x-auto"></pre>
+                </section>
+
+                <!-- Data Table Section -->
+                <section class="bg-slate-800/50 rounded-xl border border-slate-700/60 overflow-hidden shadow-lg">
+                    <div class="p-4 border-b border-slate-700/60 flex justify-between items-center">
+                        <h2 class="text-sm font-bold text-white">Query Execution Results</h2>
+                        <span id="rowCount" class="text-xs text-slate-400">0 rows returned</span>
+                    </div>
+                    <div class="overflow-x-auto max-h-[400px]">
+                        <table id="dataTable" class="w-full text-left text-xs border-collapse">
+                            <thead id="tableHead" class="bg-slate-900 text-slate-400 sticky top-0 border-b border-slate-700"></thead>
+                            <tbody id="tableBody" class="divide-y divide-slate-700/50 text-slate-200"></tbody>
+                        </table>
+                    </div>
+                </section>
+
+                <!-- Dynamic Chart Container -->
+                <section id="chartSection" class="hidden bg-slate-800/50 p-4 rounded-xl border border-slate-700/60 shadow-lg">
+                    <h2 class="text-sm font-bold text-white mb-4">Data Visualization</h2>
+                    <div class="relative w-full h-[300px]">
+                        <canvas id="resultsChart"></canvas>
+                    </div>
+                </section>
+            </div>
+
+        </div>
+
+        <!-- Error Container -->
+        <div id="errorContainer" class="hidden bg-red-950/60 border border-red-800 text-red-200 p-4 rounded-xl text-sm">
+            <h3 class="font-bold text-red-400 mb-1">Execution Failure</h3>
+            <p id="errorMessage" class="font-mono text-xs text-red-300 break-all"></p>
+        </div>
+
+    </main>
+
+    <!-- Frontend Script Block -->
+    <script>
+        // Active database path state variable
+        let activeDbPath = "company.db";
+        let currentResultsData = [];
+        let chartInstance = null;
+
+        // Upload custom SQLite database
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append("file", file);
+
+            try {
+                const response = await fetch("/upload-db", {
+                    method: "POST",
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.success) {
+                    activeDbPath = data.db_path;
+                    document.getElementById("activeDbBadge").textContent = data.filename;
+                    alert(`Database "${data.filename}" loaded successfully!`);
+                } else {
+                    alert(`Upload failed: ${data.detail || "Unknown error"}`);
+                }
+            } catch (err) {
+                alert(`Error uploading database: ${err.message}`);
+            }
+        }
+
+        // Submit NL query request
+        async function submitQuery() {
+            const questionInput = document.getElementById("questionInput");
+            const question = questionInput.value.trim();
+            if (!question) return;
+
+            setLoading(true);
+            hideError();
+
+            try {
+                const response = await fetch("/query", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        question: question,
+                        db_path: activeDbPath
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    renderResults(data);
+                } else {
+                    showError(data.error || "Failed to execute query.");
+                }
+            } catch (err) {
+                showError(`Network connection error: ${err.message}`);
+            } finally {
+                setLoading(false);
+            }
+        }
+
+        // Render data tables and chart outputs
+        function renderResults(data) {
+            currentResultsData = data.result || [];
+            document.getElementById("resultsWrapper").classList.remove("hidden");
+            document.getElementById("sqlOutput").textContent = data.generated_sql || "";
+            document.getElementById("attemptsBadge").textContent = `Attempts: ${data.attempts_needed || 1}`;
+
+            const tableHead = document.getElementById("tableHead");
+            const tableBody = document.getElementById("tableBody");
+            const rowCount = document.getElementById("rowCount");
+
+            tableHead.innerHTML = "";
+            tableBody.innerHTML = "";
+
+            if (currentResultsData.length === 0) {
+                rowCount.textContent = "0 rows returned";
+                renderChart([]);
+                return;
+            }
+
+            rowCount.textContent = `${currentResultsData.length} row(s) returned`;
+            const keys = Object.keys(currentResultsData[0]);
+
+            // Build Headers
+            let headerRow = "<tr>";
+            keys.forEach(k => {
+                headerRow += `<th class="px-4 py-2 font-semibold text-slate-300">${k}</th>`;
+            });
+            headerRow += "</tr>";
+            tableHead.innerHTML = headerRow;
+
+            // Build Rows
+            currentResultsData.forEach(row => {
+                let rowHtml = "<tr class='hover:bg-slate-700/30 transition'>";
+                keys.forEach(k => {
+                    rowHtml += `<td class="px-4 py-2 text-slate-300 font-mono">${row[k] !== null ? row[k] : "NULL"}</td>`;
+                });
+                rowHtml += "</tr>";
+                tableBody.innerHTML += rowHtml;
+            });
+
+            renderChart(currentResultsData);
+        }
+
+        // Auto-generate dynamic bar chart if numerical columns exist
+        function renderChart(data) {
+            const chartSection = document.getElementById("chartSection");
+            const ctx = document.getElementById("resultsChart").getContext("2d");
+
+            if (chartInstance) {
+                chartInstance.destroy();
+            }
+
+            if (!data || data.length === 0) {
+                chartSection.classList.add("hidden");
+                return;
+            }
+
+            const keys = Object.keys(data[0]);
+            const labelKey = keys.find(k => typeof data[0][k] === "string") || keys[0];
+            const numericKey = keys.find(k => typeof data[0][k] === "number");
+
+            if (!numericKey) {
+                chartSection.classList.add("hidden");
+                return;
+            }
+
+            chartSection.classList.remove("hidden");
+            const labels = data.map(item => String(item[labelKey]));
+            const values = data.map(item => item[numericKey]);
+
+            chartInstance = new Chart(ctx, {
+                type: "bar",
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: numericKey,
+                        data: values,
+                        backgroundColor: "rgba(99, 102, 241, 0.6)",
+                        borderColor: "rgba(99, 102, 241, 1)",
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: { beginAtZero: true, grid: { color: "rgba(255,255,255,0.1)" } },
+                        x: { grid: { color: "rgba(255,255,255,0.05)" } }
+                    },
+                    plugins: {
+                        legend: { labels: { color: "#94a3b8" } }
+                    }
+                }
+            });
+        }
+
+        // Utility: Copy SQL
+        function copySql() {
+            const sqlText = document.getElementById("sqlOutput").textContent;
+            navigator.clipboard.writeText(sqlText);
+            alert("SQL query copied to clipboard!");
+        }
+
+        // Utility: Export CSV
+        function exportCSV() {
+            if (!currentResultsData.length) return alert("No data available to export.");
+
+            const keys = Object.keys(currentResultsData[0]);
+            let csv = keys.join(",") + "\n";
+            currentResultsData.forEach(row => {
+                csv += keys.map(k => `"${row[k]}"`).join(",") + "\n";
+            });
+
+            const blob = new Blob([csv], { type: "text/csv" });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "query_results.csv";
+            a.click();
+        }
+
+        // Utility: Export PDF Report
+        function exportPDF() {
+            const element = document.getElementById("pdfExportContainer");
+            const opt = {
+                margin:       0.5,
+                filename:     'novaquery_report.pdf',
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2 },
+                jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+            };
+            html2pdf().set(opt).from(element).save();
+        }
+
+        function setLoading(isLoading) {
+            const btnSubmit = document.getElementById("btnSubmit");
+            const btnText = document.getElementById("btnText");
+            const btnSpinner = document.getElementById("btnSpinner");
+
+            btnSubmit.disabled = isLoading;
+            if (isLoading) {
+                btnText.textContent = "Analyzing...";
+                btnSpinner.classList.remove("hidden");
+            } else {
+                btnText.textContent = "Run Query";
+                btnSpinner.classList.add("hidden");
+            }
+        }
+
+        function showError(msg) {
+            document.getElementById("resultsWrapper").classList.add("hidden");
+            document.getElementById("errorContainer").classList.remove("hidden");
+            document.getElementById("errorMessage").textContent = msg;
+        }
+
+        function hideError() {
+            document.getElementById("errorContainer").classList.add("hidden");
+        }
+    </script>
+</body>
+</html> 
