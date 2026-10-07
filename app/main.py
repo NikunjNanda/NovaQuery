@@ -57,6 +57,34 @@ def clean_identifier(raw: str) -> str:
 # State tracker for active database target
 active_db_target = {"type": "file", "path": os.path.abspath(DEFAULT_DB_PATH)}
 
+DEFAULT_DB_RESOLVED = Path(DEFAULT_DB_PATH).resolve()
+
+
+def resolve_target(db_path: Optional[str]) -> str:
+    """
+    Returns the database to use for a request.
+    - No db_path sent: the active database (unchanged behaviour).
+    - db_path sent: only accepted if it is an existing file inside uploads/ (or the default DB).
+    """
+    if not db_path:
+        return active_db_target["path"]
+
+    try:
+        candidate = Path(db_path).resolve()
+    except (OSError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid database path.")
+
+    inside_uploads = UPLOAD_ROOT in candidate.parents
+    is_default = candidate == DEFAULT_DB_RESOLVED
+
+    if not (inside_uploads or is_default) or not candidate.is_file():
+        raise HTTPException(
+            status_code=400,
+            detail="Database not found. Please upload your dataset again.",
+        )
+    return str(candidate) 
+
+
 class QueryRequest(BaseModel):
     question: Optional[str] = None
     query: Optional[str] = None  # Fallback field for frontend compatibility
@@ -87,6 +115,7 @@ async def connect_uri(payload: ConnectionRequest):
         # Set remote connection as primary active target
         active_db_target["type"] = "uri"
         active_db_target["path"] = payload.connection_string
+        active_db_target["original_filename"] = None 
 
         return {
             "success": True,
@@ -104,7 +133,7 @@ async def process_query(payload: QueryRequest):
     if not user_question or not user_question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
       
-    target_db = payload.db_path if payload.db_path else active_db_target["path"]
+    target_db = resolve_target(payload.db_path) 
 
     try:
         response = run_natural_language_query(
@@ -112,7 +141,7 @@ async def process_query(payload: QueryRequest):
             db_path=target_db,
             dialect=payload.dialect
         ) 
-        return response 
+        return response  
     except Exception as e:
         print(f"Error processing query: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
@@ -206,6 +235,7 @@ async def upload_database(file: UploadFile = File(...)):
         # Track the uploaded database as the active target
         active_db_target["type"] = "file"
         active_db_target["path"] = str(final_path)
+        active_db_target["original_filename"] = original_name        
 
         return {
             "success": True,
@@ -225,64 +255,132 @@ async def upload_database(file: UploadFile = File(...)):
             engine.dispose()  # releases the SQLite file (important on Windows/OneDrive) 
 
 
+def simplify_type(raw_type) -> str:
+    """Maps any SQL type name to one of: INT, REAL, BOOL, DATE, TEXT."""
+    t = str(raw_type).upper()
+    if "BOOL" in t:
+        return "BOOL"
+    if "INT" in t:
+        return "INT"
+    if any(k in t for k in ("REAL", "FLOA", "DOUB", "NUM", "DEC")):
+        return "REAL"
+    if "DATE" in t or "TIME" in t:
+        return "DATE"
+    return "TEXT"
+
+
+def _to_float(value):
+    return float(value) if value is not None else None
+
+
+def profile_table(conn, engine, inspector, table: str) -> dict:
+    """Profiles one table using a single SQL query (nothing is loaded into memory)."""
+    quote = engine.dialect.identifier_preparer.quote
+    columns = inspector.get_columns(table)
+    pk_names = set(inspector.get_pk_constraint(table).get("constrained_columns") or [])
+
+    select_parts = ["COUNT(*)"]
+    meta = []
+    for col in columns:
+        q = quote(col["name"])
+        kind = simplify_type(col["type"])
+        numeric = kind in ("INT", "REAL")
+        select_parts += [f"COUNT({q})", f"COUNT(DISTINCT {q})"]
+        if numeric:
+            select_parts += [f"MIN({q})", f"MAX({q})", f"AVG({q})"]
+        meta.append({
+            "name": col["name"],
+            "kind": kind,
+            "sql_type": str(col["type"]),
+            "numeric": numeric,
+            "is_pk": col["name"] in pk_names,
+        })
+
+    row = conn.execute(text(f"SELECT {', '.join(select_parts)} FROM {quote(table)}")).fetchone()
+
+    total_rows = int(row[0])
+    idx = 1
+    columns_profile = []
+    total_missing = 0
+    for m in meta:
+        non_null = int(row[idx])
+        distinct = int(row[idx + 1])
+        idx += 2
+        info = {
+            "name": m["name"],
+            "type": f"{m['kind']} PK" if m["is_pk"] else m["kind"],
+            "sql_type": m["sql_type"],
+            "is_pk": m["is_pk"],
+            "missing": total_rows - non_null,
+            "missing_pct": round(((total_rows - non_null) / total_rows) * 100, 1) if total_rows else 0,
+            "unique_values": distinct,
+        }
+        if m["numeric"]:
+            info["min"] = _to_float(row[idx])
+            info["max"] = _to_float(row[idx + 1])
+            mean = _to_float(row[idx + 2])
+            info["mean"] = round(mean, 2) if mean is not None else None
+            idx += 3
+        total_missing += total_rows - non_null
+        columns_profile.append(info)
+
+    return {
+        "table_name": table,
+        "total_rows": total_rows,
+        "total_columns": len(columns_profile),
+        "total_missing_values": total_missing,
+        "columns": columns_profile,
+    }
+
+
 @app.get("/api/profile")
 async def profile_dataset(db_path: Optional[str] = None):
-    """Calculates dataset summary metrics (rows, cols, null values, schema types)."""
-    target = db_path if db_path else active_db_target["path"]
+    """Profiles every table: row/column counts, SQL types, primary keys, missing values, stats."""
+    target = resolve_target(db_path)
 
     if not target or (active_db_target["type"] == "file" and not os.path.exists(target)):
         raise HTTPException(status_code=404, detail="No active database found for profiling.")
 
+    engine = None
     try:
-        # Determine connection engine (SQLite file or URI string)
-        if target.startswith(("postgresql://", "mysql://", "sqlite:///")):
+        if "://" in target:
             engine = create_engine(target)
         else:
             engine = create_engine(f"sqlite:///{os.path.abspath(target)}")
 
         inspector = inspect(engine)
         tables = inspector.get_table_names()
-        
         if not tables:
             raise HTTPException(status_code=400, detail="No tables found in target database.")
 
-        primary_table = tables[0]
-        df = pd.read_sql_table(primary_table, con=engine)
+        with engine.connect() as conn:
+            table_profiles = [profile_table(conn, engine, inspector, t) for t in tables]
 
-        total_rows = len(df)
-        total_cols = len(df.columns)
-        total_missing = int(df.isnull().sum().sum())
-
-        columns_profile = []
-        for col in df.columns:
-            missing_count = int(df[col].isnull().sum())
-            missing_pct = round((missing_count / total_rows) * 100, 1) if total_rows > 0 else 0
-            
-            col_info = {
-                "name": col,
-                "type": str(df[col].dtype),
-                "missing": missing_count,
-                "missing_pct": missing_pct,
-                "unique_values": int(df[col].nunique())
-            }
-
-            if pd.api.types.is_numeric_dtype(df[col]):
-                col_info["min"] = float(df[col].min()) if not df[col].empty else None
-                col_info["max"] = float(df[col].max()) if not df[col].empty else None
-                col_info["mean"] = round(float(df[col].mean()), 2) if not df[col].empty else None
-
-            columns_profile.append(col_info)
+        primary = table_profiles[0]
+        source_filename = (
+            active_db_target.get("original_filename")
+            if target == active_db_target["path"] else None
+        )
 
         return {
             "success": True,
-            "table_name": primary_table,
-            "total_tables": len(tables),
-            "total_rows": total_rows,
-            "total_columns": total_cols,
-            "total_missing_values": total_missing,
-            "columns": columns_profile
+            # legacy fields (primary table), so the current frontend keeps working
+            "table_name": primary["table_name"],
+            "total_tables": len(table_profiles),
+            "total_rows": primary["total_rows"],
+            "total_columns": primary["total_columns"],
+            "total_missing_values": primary["total_missing_values"],
+            "columns": primary["columns"],
+            # new fields
+            "source_filename": source_filename,
+            "tables": table_profiles,
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Profiling error details: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Profiling error: {str(e)}") 
+        raise HTTPException(status_code=500, detail=f"Profiling error: {str(e)}")
+    finally:
+        if engine is not None:
+            engine.dispose() 
