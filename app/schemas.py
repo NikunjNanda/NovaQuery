@@ -1,5 +1,4 @@
-from typing import Any, Dict, List, Optional
-
+from typing import Any, Dict, List, Literal, Optional 
 from pydantic import BaseModel, Field
 
 
@@ -37,3 +36,37 @@ class QueryResponse(BaseModel):
     truncated: bool = False
     lesson: Optional[Lesson] = None
     error: Optional[str] = None
+
+class Classification(BaseModel):
+    category: str = "CLASSIFICATION"
+    type: str = ""
+    origin: str = ""
+
+
+class Insight(BaseModel):
+    title: str = "Worth checking in this data"
+    category: str = "Insight"
+    description: str
+
+
+class StarterQuery(BaseModel):
+    id: str
+    number: str
+    difficulty: Literal["beginner", "intermediate", "advanced"]
+    difficultyLabel: str   # camelCase on purpose: matches mockStarterQueries so the UI needs no renaming
+    category: str
+    title: str
+    description: str = ""
+    question: str
+    tags: List[str] = Field(default_factory=list)
+
+
+class BriefingResponse(BaseModel):
+    success: bool = True
+    title: str = "What this data is about"
+    description: str
+    classification: Optional[Classification] = None
+    insight: Optional[Insight] = None
+    starter_queries: List[StarterQuery]
+    try_asking: List[str]
+    source: Literal["ai", "fallback"] 

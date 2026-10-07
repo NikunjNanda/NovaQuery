@@ -7,6 +7,8 @@ from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware 
 from pydantic import BaseModel 
 from sqlalchemy import create_engine, inspect, text 
+from app.briefing import get_briefing
+from app.schemas import BriefingResponse 
 import pandas as pd  
 import sqlite3  
 
@@ -384,3 +386,21 @@ async def profile_dataset(db_path: Optional[str] = None):
     finally:
         if engine is not None:
             engine.dispose() 
+
+@app.get("/api/briefing", response_model=BriefingResponse)
+def dataset_briefing(db_path: Optional[str] = None, refresh: bool = False):
+    """Dataset description, insight and starter queries for the active dataset (cached per file)."""
+    target = resolve_target(db_path)
+    if not target or ("://" not in target and not os.path.exists(target)):
+        raise HTTPException(status_code=404, detail="No active database found.")
+
+    try:
+        return get_briefing(target, refresh=refresh)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"Briefing error details: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Briefing error: {str(e)}") 
+

@@ -23,10 +23,10 @@ MAX_ROWS = 1000  # cap rows sent to the browser
 # Initialize Gemini LLM
 api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.6-flash",
+    model="gemini-3.6-flash", 
     google_api_key=api_key,
     temperature=0,
-) if api_key else None
+) if api_key else None  
 
 # Correction prompt used when SQLite execution fails
 CORRECTION_PROMPT = PromptTemplate.from_template(
@@ -367,4 +367,4 @@ def handle_fallback_query(question: str, db_path: str) -> dict:
             truncated=truncated,
         ).model_dump()
     except Exception as e:
-        return _error_response(f"Fallback execution failed: {e}") 
+        return _error_response(f"Fallback execution failed: {e}")  
