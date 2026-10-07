@@ -1,350 +1,238 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Upload, 
-  BarChart2, 
-  Table as TableIcon, 
-  RefreshCw, 
-  Database, 
-  Layers, 
-  AlertCircle, 
-  Activity, 
-  Code, 
-  BookOpen, 
-  Sparkles 
-} from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, Legend } from 'recharts';
-import { uploadDatabase, executeQuery, fetchProfile } from './api';
+import React from 'react';
+import { useNovaQuery } from './hooks/useNovaQuery';
+import Shell from './components/layout/Shell';
+import Modal from './components/common/Modal';
+import DatasetReadyBanner from './components/workspace/DatasetReadyBanner';
+import QueryCard from './components/workspace/QueryCard';
+import ResultsSection from './components/results/ResultsSection';
+import HowQueryWorksPanel from './components/lesson/HowQueryWorksPanel';
+import DatasetBriefingCard from './components/workspace/DatasetBriefingCard';
+import StarterQueriesSection from './components/workspace/StarterQueriesSection';
+import {
+  mockDatasetBriefing,
+  mockStarterQueries,
+  mockTryAskingSuggestions,
+} from './mockData';
+import { Layers, BookOpen, Upload } from 'lucide-react';
 
 export default function App() {
-  const [file, setFile] = useState(null);
-  const [dbPath, setDbPath] = useState(null);
-  const [query, setQuery] = useState('Show me the top 10 rows');
-  const [activeView, setActiveView] = useState('table'); // 'table' | 'chart'
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const {
+    activeTab,
+    setActiveTab,
+    datasetInfo,
+    profile,
+    reloadProfile,
+    queryText,
+    setQueryText,
+    queryMode,
+    setQueryMode,
+    loadingQuery,
+    queryError,
+    queryResult,
+    responseTime,
+    runQuery,
+    history,
+    activeHistoryId,
+    handleSelectHistory,
+    bannerDismissed,
+    setBannerDismissed,
+    isUploadOpen,
+    setIsUploadOpen,
+    isHelpOpen,
+    setIsHelpOpen,
+  } = useNovaQuery();
 
-  // Data Profiling State
-  const [profile, setProfile] = useState(null);
-  const [loadingProfile, setLoadingProfile] = useState(false);
-
-  // Query Results & Educational Metadata State
-  const [results, setResults] = useState([]);
-  const [generatedSql, setGeneratedSql] = useState('');
-  const [explanation, setExplanation] = useState('');
-  const [suggestedQueries, setSuggestedQueries] = useState([]);
-
-  // Load dataset profile from backend
-  const loadProfile = async (targetPath = null) => {
-    setLoadingProfile(true);
-    try {
-      const data = await fetchProfile(targetPath);
-      setProfile(data);
-    } catch (err) {
-      console.error('Failed to load profile:', err);
-    } finally {
-      setLoadingProfile(false);
-    }
+  // Starter query card clicked: only fills the query input box without auto-running
+  const handleSelectStarterQuery = (questionText) => {
+    setQueryText(questionText);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Fetch initial profile on mount if active DB exists
-  useEffect(() => {
-    loadProfile();
-  }, []);
-
-  const handleFileUpload = async (e) => {
-    const uploadedFile = e.target.files[0];
-    if (!uploadedFile) return;
-
-    setFile(uploadedFile);
-    setLoading(true);
-    setError(null);
-
-    try {
-      const res = await uploadDatabase(uploadedFile);
-      if (res.success) {
-        setDbPath(res.db_path);
-        await loadProfile(res.db_path);
-      }
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to upload dataset.');
-    } finally {
-      setLoading(false);
-    }
+  // Suggestion chip clicked: fills the query input box without auto-running
+  const handleSelectSuggestion = (suggestionText) => {
+    setQueryText(suggestionText);
   };
 
-  const handleExecuteQuery = async (queryToRun = query) => {
-    if (!queryToRun.trim()) return;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const res = await executeQuery(queryToRun, dbPath);
-      
-      // Extract data rows
-      if (res.data) {
-        setResults(res.data);
-      } else if (res.results) {
-        setResults(res.results);
-      } else if (Array.isArray(res)) {
-        setResults(res);
-      } else {
-        setResults([]);
-      }
-
-      // Extract educational metadata returned by updated backend
-      setGeneratedSql(res.generated_sql || '');
-      setExplanation(res.explanation || '');
-      setSuggestedQueries(res.suggested_queries || []);
-
-    } catch (err) {
-      setError(err.response?.data?.detail || 'Query execution failed.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleSuggestionClick = (suggestedText) => {
-    setQuery(suggestedText);
-    handleExecuteQuery(suggestedText);
-  };
-
-  // Safe Key extraction for Table headers and Chart axes
-  const dataKeys = results && results.length > 0 ? Object.keys(results[0]) : [];
-  const xAxisKey = dataKeys[0] || '';
-  const numericKeys = dataKeys.filter(
-    key => key !== xAxisKey && typeof results[0]?.[key] === 'number'
-  );
+  // Active suggestions: backend suggested_queries prioritized over initial starters
+  const activeSuggestions =
+    queryResult?.suggested_queries && queryResult.suggested_queries.length > 0
+      ? queryResult.suggested_queries
+      : mockTryAskingSuggestions;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* Header */}
-      <header className="border-b border-slate-800 bg-slate-900/50 px-6 py-4 flex items-center justify-between backdrop-blur">
-        <div className="flex items-center gap-2">
-          <Database className="w-6 h-6 text-cyan-400" />
-          <h1 className="text-lg font-bold text-slate-100">NovaQuery</h1>
-        </div>
-
-        {/* Upload Button */}
-        <label className="text-xs bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 px-3 py-1.5 rounded-full transition cursor-pointer flex items-center gap-1.5 font-medium">
-          <Upload className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Upload File</span>
-          <input 
-            type="file" 
-            accept=".db,.sqlite,.sqlite3,.sql,.csv,.xlsx,.xls,.json,.parquet" 
-            onChange={handleFileUpload} 
-            className="hidden" 
+    <Shell
+      activeTab={activeTab}
+      onSelectTab={setActiveTab}
+      datasetInfo={datasetInfo}
+      profile={profile}
+      history={history}
+      activeHistoryId={activeHistoryId}
+      onSelectHistory={handleSelectHistory}
+      onRefreshSchema={() => reloadProfile()}
+      onOpenUpload={() => setIsUploadOpen(true)}
+      onOpenHelp={() => setIsHelpOpen(true)}
+    >
+      {/* Tab 1: Workspace */}
+      {activeTab === 'workspace' && (
+        <div className="flex flex-col gap-6">
+          {/* 1. Dataset Ready Banner (Dismissible) */}
+          <DatasetReadyBanner
+            isDismissed={bannerDismissed}
+            onDismiss={() => setBannerDismissed(true)}
+            filename={datasetInfo.name}
+            rows={datasetInfo.rows}
+            cols={datasetInfo.cols}
+            onQuickPreview={() => {
+              const briefingEl = document.getElementById('dataset-briefing-section');
+              if (briefingEl) briefingEl.scrollIntoView({ behavior: 'smooth' });
+            }}
           />
-        </label>
-      </header>
 
-      {/* Main Workspace */}
-      <main className="flex-1 p-6 max-w-7xl w-full mx-auto flex flex-col gap-6">
-        {file && (
-          <div className="text-xs text-cyan-400 bg-cyan-950/30 border border-cyan-800/50 rounded-lg p-2.5 flex items-center justify-between">
-            <span>Loaded File: <strong>{file.name}</strong></span>
-            <span className="text-slate-400">({(file.size / 1024).toFixed(1)} KB)</span>
-          </div>
-        )}
+          {/* 2. Query Card: Natural Language / SQL editor, Run button, Ctrl+Enter, Suggestion chips */}
+          <QueryCard
+            queryText={queryText}
+            onChangeQuery={setQueryText}
+            queryMode={queryMode}
+            onChangeMode={setQueryMode}
+            onRunQuery={() => runQuery()}
+            loading={loadingQuery}
+            filename={datasetInfo.name}
+            suggestions={activeSuggestions}
+            onSelectSuggestion={handleSelectSuggestion}
+          />
 
-        {/* Automated Data Profiling Banner */}
-        {profile && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center gap-3 shadow-md">
-              <Layers className="w-8 h-8 text-cyan-400 p-1.5 bg-cyan-950/50 rounded-lg" />
-              <div>
-                <p className="text-xs text-slate-400 font-medium uppercase">Total Rows</p>
-                <p className="text-lg font-bold text-slate-100">{profile.total_rows?.toLocaleString() ?? 0}</p>
+          {/* 3. Query Execution Output: Results Area + Educational Lesson Panel */}
+          {(loadingQuery || queryError || queryResult) && (
+            <div id="results-and-lesson-section" className="flex flex-col lg:flex-row items-start gap-6">
+              {/* Left Column: Results Section (Table, Charts, SQL) */}
+              <div className="flex-1 min-w-0 w-full">
+                <ResultsSection
+                  loading={loadingQuery}
+                  error={queryError}
+                  result={queryResult}
+                  responseTime={responseTime}
+                  onRetry={() => runQuery()}
+                />
+              </div>
+
+              {/* Right Column: Educational Lesson Panel (Stacked on tablet/mobile) */}
+              <div className="w-full lg:w-[400px] xl:w-[440px] shrink-0">
+                <HowQueryWorksPanel
+                  loading={loadingQuery}
+                  error={queryError}
+                  // TODO(backend): lesson object returned by /api/query
+                  lesson={queryResult?.lesson || null}
+                  fallbackExplanation={queryResult?.explanation || ''}
+                  onSelectModifyIdea={(questionText) => {
+                    setQueryText(questionText);
+                    window.scrollTo({ top: 0, behavior: 'smooth' });
+                  }}
+                />
               </div>
             </div>
+          )}
 
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center gap-3 shadow-md">
-              <TableIcon className="w-8 h-8 text-indigo-400 p-1.5 bg-indigo-950/50 rounded-lg" />
-              <div>
-                <p className="text-xs text-slate-400 font-medium uppercase">Columns</p>
-                <p className="text-lg font-bold text-slate-100">{profile.total_columns ?? 0}</p>
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center gap-3 shadow-md">
-              <AlertCircle className="w-8 h-8 text-amber-400 p-1.5 bg-amber-950/50 rounded-lg" />
-              <div>
-                <p className="text-xs text-slate-400 font-medium uppercase">Missing Values</p>
-                <p className="text-lg font-bold text-slate-100">{profile.total_missing_values?.toLocaleString() ?? 0}</p>
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex items-center gap-3 shadow-md">
-              <Activity className="w-8 h-8 text-emerald-400 p-1.5 bg-emerald-950/50 rounded-lg" />
-              <div>
-                <p className="text-xs text-slate-400 font-medium uppercase">Active Table</p>
-                <p className="text-sm font-bold text-slate-100 truncate">{profile.table_name || 'N/A'}</p>
-              </div>
-            </div>
+          {/* 4. Dataset Briefing Card: Schema metadata & Distribution Insight */}
+          <div id="dataset-briefing-section">
+            <DatasetBriefingCard
+              // TODO(backend): briefing will come from GET /api/dataset-briefing
+              briefing={mockDatasetBriefing}
+              columns={profile?.columns || []}
+            />
           </div>
-        )}
 
-        {error && (
-          <div className="text-xs text-rose-400 bg-rose-950/30 border border-rose-800/50 rounded-lg p-3">
-            {error}
-          </div>
-        )}
-
-        {/* Query Editor Box */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col gap-3 shadow-lg">
-          <div className="flex justify-between items-center">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Natural Language Query Engine</span>
-            <button
-              onClick={() => handleExecuteQuery(query)}
-              disabled={loading}
-              className="text-xs bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold px-4 py-1.5 rounded-lg transition flex items-center gap-1.5 disabled:opacity-50"
-            >
-              {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : 'Run Query'}
-            </button>
-          </div>
-          <textarea
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            className="w-full h-20 bg-slate-950 border border-slate-800 rounded-lg p-3 text-sm font-mono text-cyan-300 focus:outline-none focus:border-cyan-500 transition resize-none"
-            placeholder="Ask a question in plain English (e.g. Show me the top 10 rows)..."
+          {/* 5. Recommended Starter Queries Curriculum (Beginner, Intermediate, Advanced) */}
+          <StarterQueriesSection
+            // TODO(backend): starterQueries will come from GET /api/starter-queries
+            starterQueries={mockStarterQueries}
+            onSelectQuery={handleSelectStarterQuery}
           />
         </div>
+      )}
 
-        {/* Educational Cards: Generated SQL & Teacher Explanation */}
-        {(generatedSql || explanation) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Generated SQL Box */}
-            {generatedSql && (
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-md flex flex-col gap-2">
-                <div className="flex items-center gap-2 text-cyan-400 font-semibold text-xs uppercase tracking-wider">
-                  <Code className="w-4 h-4" />
-                  <span>Generated SQL Statement</span>
-                </div>
-                <pre className="bg-slate-950 p-3 rounded-lg text-xs font-mono text-cyan-300 overflow-x-auto border border-slate-800/80">
-                  {generatedSql}
-                </pre>
-              </div>
-            )}
-
-            {/* Teacher Explanation Box */}
-            {explanation && (
-              <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-md flex flex-col gap-2">
-                <div className="flex items-center gap-2 text-emerald-400 font-semibold text-xs uppercase tracking-wider">
-                  <BookOpen className="w-4 h-4" />
-                  <span>Teacher Explanation</span>
-                </div>
-                <p className="text-xs text-slate-300 leading-relaxed bg-slate-950/50 p-3 rounded-lg border border-slate-800/50">
-                  {explanation}
-                </p>
-              </div>
-            )}
+      {/* Tab 2: Schema Placeholder */}
+      {activeTab === 'schema' && (
+        <div className="flex flex-col items-center justify-center p-12 bg-[#0d1322] border border-[#1a243a] rounded-2xl text-center gap-3">
+          <div className="w-12 h-12 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400">
+            <Layers className="w-6 h-6" />
           </div>
-        )}
+          <h2 className="text-lg font-semibold text-slate-100">Schema View</h2>
+          <p className="text-xs text-slate-400 max-w-md">
+            Full relational schema diagrams, entity relationships, and column statistics. Coming soon.
+          </p>
+        </div>
+      )}
 
-        {/* Suggested Follow-up Query Chips */}
-        {suggestedQueries.length > 0 && (
-          <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3 flex flex-wrap items-center gap-2">
-            <span className="text-xs text-amber-400 font-medium flex items-center gap-1.5 mr-2">
-              <Sparkles className="w-3.5 h-3.5" /> Suggested Queries:
-            </span>
-            {suggestedQueries.map((item, idx) => (
-              <button
-                key={idx}
-                onClick={() => handleSuggestionClick(item)}
-                className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700/60 px-3 py-1 rounded-full transition"
-              >
-                {item}
-              </button>
-            ))}
+      {/* Tab 3: Practice Placeholder */}
+      {activeTab === 'practice' && (
+        <div className="flex flex-col items-center justify-center p-12 bg-[#0d1322] border border-[#1a243a] rounded-2xl text-center gap-3">
+          <div className="w-12 h-12 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400">
+            <BookOpen className="w-6 h-6" />
           </div>
-        )}
+          <h2 className="text-lg font-semibold text-slate-100">Practice Mode</h2>
+          <p className="text-xs text-slate-400 max-w-md">
+            Interactive SQL challenges, curriculum exercises, and sandbox testing. Coming soon.
+          </p>
+        </div>
+      )}
 
-        {/* Results Section */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 flex flex-col gap-4 shadow-lg flex-1">
-          {/* Controls Bar */}
-          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-            <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-              Query Output ({results.length} rows)
+      {/* Upload Data Modal */}
+      <Modal
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        title="Upload Dataset"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-xs text-slate-400">
+            Select a database or tabular file to load into NovaQuery. Supported formats: .db, .sqlite, .sqlite3, .sql, .csv, .xlsx, .json, .parquet.
+          </p>
+          <label className="border-2 border-dashed border-[#1a243a] hover:border-cyan-500/50 rounded-xl p-8 flex flex-col items-center justify-center gap-2 cursor-pointer transition bg-[#05080f]/50">
+            <Upload className="w-8 h-8 text-cyan-400" />
+            <span className="text-xs font-semibold text-slate-200">
+              Click to browse or drop file here
             </span>
-            
-            {/* View Toggle */}
-            <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800">
-              <button
-                onClick={() => setActiveView('table')}
-                className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded-md transition ${
-                  activeView === 'table' ? 'bg-slate-800 text-cyan-400 font-medium' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <TableIcon className="w-3.5 h-3.5" />
-                Table
-              </button>
-              <button
-                onClick={() => setActiveView('chart')}
-                className={`flex items-center gap-1.5 text-xs px-3 py-1 rounded-md transition ${
-                  activeView === 'chart' ? 'bg-slate-800 text-cyan-400 font-medium' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <BarChart2 className="w-3.5 h-3.5" />
-                Visualization
-              </button>
+            <span className="text-[11px] text-slate-500 font-mono">
+              Max file size 50MB
+            </span>
+            <input
+              type="file"
+              accept=".db,.sqlite,.sqlite3,.sql,.csv,.xlsx,.xls,.json,.parquet"
+              className="hidden"
+              onChange={() => {
+                // Upload flow will be fully wired in Stage 5
+                setIsUploadOpen(false);
+              }}
+            />
+          </label>
+        </div>
+      </Modal>
+
+      {/* Help & Shortcuts Modal */}
+      <Modal
+        isOpen={isHelpOpen}
+        onClose={() => setIsHelpOpen(false)}
+        title="NovaQuery Help & Shortcuts"
+      >
+        <div className="flex flex-col gap-4 text-xs text-slate-300">
+          <p>
+            NovaQuery allows querying datasets using plain English natural language while simultaneously explaining the generated SQL statements.
+          </p>
+          <div className="flex flex-col gap-2 font-mono">
+            <div className="flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800">
+              <span className="text-slate-400">Run Query</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-400 text-[11px]">
+                Ctrl + Enter
+              </kbd>
+            </div>
+            <div className="flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800">
+              <span className="text-slate-400">Upload Data</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-400 text-[11px]">
+                Ctrl + 0
+              </kbd>
             </div>
           </div>
-
-          {/* View Container */}
-          <div className="flex-1 min-h-[300px]">
-            {results.length === 0 ? (
-              <div className="h-48 flex items-center justify-center text-slate-500 text-sm">
-                No data returned. Upload a file or run a query to get started.
-              </div>
-            ) : activeView === 'table' ? (
-              /* Data Table View */
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-800 text-slate-400 bg-slate-950/50">
-                      {dataKeys.map((key) => (
-                        <th key={key} className="p-3 font-semibold uppercase">{key}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800/50">
-                    {results.map((row, index) => (
-                      <tr key={index} className="hover:bg-slate-800/30 transition">
-                        {dataKeys.map((key) => (
-                          <td key={key} className="p-3 text-slate-300 font-mono">{String(row[key] ?? '')}</td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              /* Recharts Visualization View */
-              <div className="w-full h-[320px] pt-4">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={results}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey={xAxisKey} stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                    <YAxis stroke="#94a3b8" tick={{ fill: '#94a3b8', fontSize: 12 }} />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: '#0f172a', borderColor: '#334155', borderRadius: '8px', color: '#f8fafc' }}
-                    />
-                    <Legend wrapperStyle={{ paddingTop: '10px' }} />
-                    {numericKeys.map((key, i) => (
-                      <Bar 
-                        key={key} 
-                        dataKey={key} 
-                        fill={i % 2 === 0 ? '#06b6d4' : '#6366f1'} 
-                        radius={[4, 4, 0, 0]} 
-                      />
-                    ))}
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            )}
-          </div>
         </div>
-      </main>
-    </div>
+      </Modal>
+    </Shell>
   );
-} 
+}
