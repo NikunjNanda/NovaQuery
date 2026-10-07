@@ -1,4 +1,6 @@
 import os 
+import re 
+from pathlib import Path 
 import shutil  
 from typing import Optional 
 from fastapi import FastAPI, HTTPException, File, UploadFile 
@@ -6,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel 
 from sqlalchemy import create_engine, inspect, text 
 import pandas as pd  
-import sqlite3 
+import sqlite3  
 
 from app.query_engine import run_natural_language_query, DEFAULT_DB_PATH 
 
@@ -23,6 +25,34 @@ app.add_middleware(
 
 UPLOAD_DIR = os.path.abspath("uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True) 
+
+UPLOAD_ROOT = Path(UPLOAD_DIR).resolve()
+ALLOWED_EXTENSIONS = {
+    ".db", ".sqlite", ".sqlite3",
+    ".csv", ".xlsx", ".xls", ".json", ".parquet", ".sql",
+}
+NATIVE_SQLITE_EXTENSIONS = {".db", ".sqlite", ".sqlite3"}
+MAX_UPLOAD_MB = 50
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+
+def safe_filename(raw_name: Optional[str]) -> str:
+    """Keeps only the bare file name, so folders and '..' from the client are ignored."""
+    name = Path((raw_name or "").replace("\\", "/")).name.strip()
+    if not name or name in {".", ".."}:
+        raise HTTPException(status_code=400, detail="Invalid file name.")
+    return name
+
+
+def clean_identifier(raw: str) -> str:
+    """Turns any text into a safe SQL table/file name: letters, digits, underscores."""
+    cleaned = re.sub(r"\W+", "_", raw.strip().lower()).strip("_")
+    if not cleaned:
+        cleaned = "data"
+    if cleaned[0].isdigit():
+        cleaned = f"t_{cleaned}"
+    return cleaned 
+
 
 # State tracker for active database target
 active_db_target = {"type": "file", "path": os.path.abspath(DEFAULT_DB_PATH)}
@@ -89,79 +119,111 @@ async def process_query(payload: QueryRequest):
 
 @app.post("/api/upload-db")
 async def upload_database(file: UploadFile = File(...)):
+    engine = None
     try:
-        filename = file.filename.lower()
-        temp_path = os.path.join(UPLOAD_DIR, file.filename)
-        
+        original_name = safe_filename(file.filename)
+        stem, ext = os.path.splitext(original_name)
+        ext = ext.lower()
+
+        if ext not in ALLOWED_EXTENSIONS:
+            allowed = ", ".join(sorted(ALLOWED_EXTENSIONS))
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file format '{ext or 'none'}'. Allowed: {allowed}",
+            )
+
+        temp_path = (UPLOAD_ROOT / original_name).resolve()
+        if temp_path.parent != UPLOAD_ROOT:
+            raise HTTPException(status_code=400, detail="Invalid file name.")
+
+        # Stream the file to disk in 1 MB chunks, stopping if it gets too big
+        written = 0
+        too_large = False
         with open(temp_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_UPLOAD_BYTES:
+                    too_large = True
+                    break
+                buffer.write(chunk)
 
-        target_sqlite_path = os.path.abspath(os.path.join(UPLOAD_DIR, f"{os.path.splitext(file.filename)[0]}.db"))
-        engine = create_engine(f"sqlite:///{target_sqlite_path}")
+        if too_large:
+            temp_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=413,
+                detail=f"File is too large. Maximum size is {MAX_UPLOAD_MB} MB.",
+            )
 
-        # 1. Native SQLite Files
-        if filename.endswith((".db", ".sqlite", ".sqlite3")):
-            final_path = os.path.abspath(temp_path)
+        base_table_name = clean_identifier(stem)
+        target_sqlite_path = (UPLOAD_ROOT / f"{base_table_name}.db").resolve()
 
-        # 2. CSV Files
-        elif filename.endswith(".csv"):
-            df = pd.read_csv(temp_path)
-            table_name = os.path.splitext(file.filename)[0].replace(" ", "_").replace("-", "_").lower()
-            df.to_sql(table_name, con=engine, if_exists="replace", index=False)
-            final_path = target_sqlite_path
-
-        # 3. Excel Files (.xlsx, .xls)
-        elif filename.endswith((".xlsx", ".xls")):
-            excel_file = pd.ExcelFile(temp_path)
-            for sheet_name in excel_file.sheet_names:
-                df = pd.read_excel(temp_path, sheet_name=sheet_name)
-                clean_table_name = sheet_name.strip().replace(" ", "_").replace("-", "_").lower()
-                df.to_sql(clean_table_name, con=engine, if_exists="replace", index=False)
-            final_path = target_sqlite_path
-
-        # 4. JSON Files (.json)
-        elif filename.endswith(".json"):
-            df = pd.read_json(temp_path)
-            table_name = os.path.splitext(file.filename)[0].replace(" ", "_").replace("-", "_").lower()
-            df.to_sql(table_name, con=engine, if_exists="replace", index=False)
-            final_path = target_sqlite_path
-
-        # 5. Parquet Files (.parquet)
-        elif filename.endswith(".parquet"):
-            df = pd.read_parquet(temp_path)
-            table_name = os.path.splitext(file.filename)[0].replace(" ", "_").replace("-", "_").lower()
-            df.to_sql(table_name, con=engine, if_exists="replace", index=False)
-            final_path = target_sqlite_path
-
-        # 6. SQL Dumps (.sql)
-        elif filename.endswith(".sql"):
-            with open(temp_path, "r", encoding="utf-8") as f:
-                sql_script = f.read()
-            with engine.connect() as conn:
-                for statement in sql_script.split(";"):
-                    if statement.strip():
-                        try:
-                            conn.execute(text(statement))
-                        except Exception:
-                            pass
-            final_path = target_sqlite_path
+        # 1. Native SQLite files are used as they are
+        if ext in NATIVE_SQLITE_EXTENSIONS:
+            final_path = temp_path
 
         else:
-            raise HTTPException(status_code=400, detail="Unsupported file format.")
+            engine = create_engine(f"sqlite:///{target_sqlite_path}")
 
-        # Track uploaded database path
+            # 2. CSV
+            if ext == ".csv":
+                df = pd.read_csv(temp_path)
+                df.to_sql(base_table_name, con=engine, if_exists="replace", index=False)
+
+            # 3. Excel (one table per sheet)
+            elif ext in {".xlsx", ".xls"}:
+                excel_file = pd.ExcelFile(temp_path)
+                for sheet_name in excel_file.sheet_names:
+                    df = pd.read_excel(temp_path, sheet_name=sheet_name)
+                    df.to_sql(clean_identifier(sheet_name), con=engine, if_exists="replace", index=False)
+
+            # 4. JSON
+            elif ext == ".json":
+                df = pd.read_json(temp_path)
+                df.to_sql(base_table_name, con=engine, if_exists="replace", index=False)
+
+            # 5. Parquet
+            elif ext == ".parquet":
+                df = pd.read_parquet(temp_path)
+                df.to_sql(base_table_name, con=engine, if_exists="replace", index=False)
+
+            # 6. SQL dumps (engine.begin() commits when the block finishes)
+            elif ext == ".sql":
+                with open(temp_path, "r", encoding="utf-8") as f:
+                    sql_script = f.read()
+                with engine.begin() as conn:
+                    for statement in sql_script.split(";"):
+                        if statement.strip():
+                            try:
+                                conn.execute(text(statement))
+                            except Exception:
+                                pass
+
+            final_path = target_sqlite_path
+
+        # Track the uploaded database as the active target
         active_db_target["type"] = "file"
-        active_db_target["path"] = final_path
+        active_db_target["path"] = str(final_path)
 
         return {
-            "success": True, 
-            "filename": os.path.basename(final_path), 
-            "db_path": final_path, 
-            "type": "converted"
+            "success": True,
+            "filename": final_path.name,
+            "original_filename": original_name,
+            "db_path": str(final_path),
+            "type": "converted",
         }
+
+    except HTTPException:
+        raise  # keep real 400 / 413 errors instead of turning them into 500s
     except Exception as e:
         print(f"Error uploading database: {str(e)}")
         raise HTTPException(status_code=500, detail=f"File upload error: {str(e)}")
+    finally:
+        if engine is not None:
+            engine.dispose()  # releases the SQLite file (important on Windows/OneDrive) 
+
 
 @app.get("/api/profile")
 async def profile_dataset(db_path: Optional[str] = None):
