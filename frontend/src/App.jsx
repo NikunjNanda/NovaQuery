@@ -10,7 +10,8 @@ import ResultsSection from './components/results/ResultsSection';
 import HowQueryWorksPanel from './components/lesson/HowQueryWorksPanel';
 import DatasetBriefingCard from './components/workspace/DatasetBriefingCard';
 import StarterQueriesSection from './components/workspace/StarterQueriesSection';
-import { Layers, BookOpen, Upload, RefreshCw } from 'lucide-react';
+import PracticeLab from './components/practice/PracticeLab';
+import { Layers, Upload, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const {
@@ -224,18 +225,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Tab 3: Practice Placeholder */}
-      {activeTab === 'practice' && (
-        <div className="flex flex-col items-center justify-center p-12 bg-[#0d1322] border border-[#1a243a] rounded-2xl text-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400">
-            <BookOpen className="w-6 h-6" />
-          </div>
-          <h2 className="text-lg font-semibold text-slate-100">Practice Mode</h2>
-          <p className="text-xs text-slate-400 max-w-md">
-            Interactive SQL challenges, curriculum exercises, and sandbox testing. Coming soon.
-          </p>
-        </div>
-      )}
+      {/* Tab 3: Practice Lab */}
+      {activeTab === 'practice' && <PracticeLab />}
 
       {/* Upload Data Modal */}
       <Modal
