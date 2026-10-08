@@ -19,11 +19,14 @@ app = FastAPI(title="NovaQuery AI Engine")
 # Configure CORS Middleware explicitly
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"],
+    allow_origins=[
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:5174", "http://127.0.0.1:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)  
+)   
 
 UPLOAD_DIR = os.path.abspath("uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True) 
@@ -102,31 +105,34 @@ async def read_root():
 
 @app.post("/api/connect-uri")
 async def connect_uri(payload: ConnectionRequest):
-    """Validates and inspects a live PostgreSQL, MySQL, or remote DB connection URI"""
+    """Checks that a live database is reachable and lists its tables. Querying it is not enabled yet."""
+    engine = None
     try:
         engine = create_engine(payload.connection_string, connect_args={"connect_timeout": 5})
         inspector = inspect(engine)
         table_names = inspector.get_table_names()
-        
+
         schema_summary = []
         for table in table_names:
             columns = inspector.get_columns(table)
-            cols_str = ", ".join([f"{col['name']} ({col['type']})" for col in columns])
+            cols_str = ", ".join(f"{col['name']} ({col['type']})" for col in columns)
             schema_summary.append(f"Table {table}: {cols_str}")
-            
-        # Set remote connection as primary active target
-        active_db_target["type"] = "uri"
-        active_db_target["path"] = payload.connection_string
-        active_db_target["original_filename"] = None 
 
         return {
             "success": True,
-            "message": f"Connected successfully! Found {len(table_names)} tables.",
+            "message": (
+                f"Connection verified. Found {len(table_names)} tables. "
+                "Running queries on live databases is planned for a future release; "
+                "upload a file to query it now."
+            ),
             "tables": table_names,
-            "schema": schema_summary
+            "schema": schema_summary,
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Connection failed: {str(e)}")
+    finally:
+        if engine is not None:
+            engine.dispose() 
 
 @app.post("/api/query")
 async def process_query(payload: QueryRequest):

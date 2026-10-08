@@ -1,6 +1,8 @@
-import json
+import json 
 import os
 import time 
+import hashlib 
+from pathlib import Path 
 
 from langchain_core.prompts import PromptTemplate
 from sqlalchemy import create_engine, inspect, text
@@ -24,6 +26,34 @@ DIFFICULTY_LABELS = {
 _cache: dict = {}
 _fail_cache: dict = {}
 FAIL_TTL_SECONDS = 300  # after an AI failure, reuse the fallback for 5 minutes 
+
+CACHE_DIR = Path("briefing_cache")
+
+
+def _schema_key(schema: list) -> str:
+    return hashlib.sha256(
+        json.dumps(schema, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def _load_disk(key: str):
+    try:
+        path = CACHE_DIR / f"{key}.json"
+        if path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception as e:
+        print(f"Briefing disk cache read failed: {e}")
+    return None
+
+
+def _save_disk(key: str, result: dict):
+    try:
+        CACHE_DIR.mkdir(exist_ok=True)
+        (CACHE_DIR / f"{key}.json").write_text(
+            json.dumps(result), encoding="utf-8"
+        )
+    except Exception as e:
+        print(f"Briefing disk cache write failed: {e}") 
 
 BRIEFING_PROMPT = PromptTemplate.from_template(
     """You are a friendly data teacher helping a beginner understand an uploaded dataset and learn SQL from it.
@@ -317,28 +347,7 @@ def _ai_briefing(schema: list):
 
 # ---------- public entry point ----------
 
-def _cache_key(target: str):
-    if "://" in target:
-        return target
-    stat = os.stat(target)
-    return (os.path.abspath(target), stat.st_mtime_ns, stat.st_size)
-
 def get_briefing(target: str, refresh: bool = False) -> dict:
-    key = _cache_key(target)
-
-    # 1. A good result (AI, or fallback when there is no API key) is reused until the file changes
-    if not refresh and key in _cache:
-        print("Briefing: cache hit")
-        return _cache[key]
-
-    # 2. If Gemini failed recently, reuse the fallback for a few minutes instead of retrying
-    #    on every page load (each retry would waste free-tier quota)
-    if not refresh and key in _fail_cache:
-        failed_at, failed_result = _fail_cache[key]
-        if time.time() - failed_at < FAIL_TTL_SECONDS:
-            print("Briefing: using recent fallback (AI failed recently)")
-            return failed_result
-
     engine = create_engine(target) if "://" in target else create_engine(f"sqlite:///{os.path.abspath(target)}")
     try:
         schema = collect_schema(engine)
@@ -348,17 +357,37 @@ def get_briefing(target: str, refresh: bool = False) -> dict:
     if not schema:
         raise ValueError("No tables found in this database.")
 
+    key = _schema_key(schema)
+
+    if not refresh:
+        if key in _cache:
+            print("Briefing: memory cache hit")
+            return _cache[key]
+
+        saved = _load_disk(key)
+        if saved:
+            print("Briefing: disk cache hit")
+            _cache[key] = saved
+            return saved
+
+        if key in _fail_cache:
+            failed_at, failed_result = _fail_cache[key]
+            if time.time() - failed_at < FAIL_TTL_SECONDS:
+                print("Briefing: using recent fallback (AI failed recently)")
+                return failed_result
+
     print("Briefing: generating")
     result = _ai_briefing(schema) if llm else None
     if result is None:
         result = _fallback_briefing(schema)
 
-    if result["source"] == "ai" or not llm:
-        # Real AI result, or the permanent no-API-key fallback
+    if result["source"] == "ai":
         _cache[key] = result
+        _save_disk(key, result)
         _fail_cache.pop(key, None)
+    elif not llm:
+        _cache[key] = result
     else:
-        # Gemini failed (quota, timeout, bad output): remember it briefly, don't cache it for good
         _fail_cache[key] = (time.time(), result)
 
-    return result
+    return result 

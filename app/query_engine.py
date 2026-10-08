@@ -241,6 +241,11 @@ def generate_teacher_content(question: str, sql_query: str, schema: str) -> dict
         ),
     }
 
+def _friendly_error(e: Exception) -> str:
+    msg = str(e)
+    if "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
+        return "The AI service has reached its daily limit (quota exceeded, 429). Please try again later."
+    return msg
 
 # ---------- main pipeline ----------
 
@@ -254,6 +259,13 @@ def run_natural_language_query(
     Generates, validates, and executes a SQL query against a SQLite database.
     Always returns the standard QueryResponse shape (success or failure).
     """
+    
+     # Reject live database connections for query execution
+    if "://" in str(db_path):
+        return _error_response(
+            "Live database connections are not supported for queries yet. Please upload a file."
+        )
+    
     last_error = None
     cleaned_sql = ""
     attempts = 0
@@ -329,7 +341,7 @@ def run_natural_language_query(
                 ) 
 
         except Exception as e:
-            return _error_response(str(e), sql=cleaned_sql, attempts=attempts + 1)
+            return _error_response(_friendly_error(e), sql=cleaned_sql, attempts=attempts + 1) 
 
 
 def handle_fallback_query(question: str, db_path: str) -> dict:
