@@ -23,7 +23,7 @@ export default function QueryCard({
   onChangeMode,
   onRunQuery,
   loading = false,
-  filename = 'iris.csv',
+  filename = '',
   suggestions = [],
   onSelectSuggestion,
   runNotice = null,
@@ -83,8 +83,8 @@ export default function QueryCard({
           rows={3}
           placeholder={
             isEnglish
-              ? `Ask any question about ${filename}, or pick a starter question below...`
-              : `SELECT * FROM ${filename.replace(/\.[^/.]+$/, '')} LIMIT 10;`
+              ? (filename ? `Ask any question about ${filename}, or pick a starter question below...` : 'Ask any question about your data, or pick a starter question below...')
+              : (filename ? `SELECT * FROM ${filename.replace(/\.[^/.]+$/, '')} LIMIT 10;` : 'SELECT * FROM table_name LIMIT 10;')
           }
           className="w-full bg-[#05080f] border border-[#151f33] focus:border-cyan-500/80 rounded-xl p-3.5 text-xs sm:text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none transition resize-none leading-relaxed"
         />

@@ -1,19 +1,16 @@
 import React from 'react';
 import { useNovaQuery } from './hooks/useNovaQuery';
+import { useDatasetBriefing } from './hooks/useDatasetBriefing';
 import Shell from './components/layout/Shell';
 import Modal from './components/common/Modal';
+import Skeleton from './components/common/Skeleton';
 import DatasetReadyBanner from './components/workspace/DatasetReadyBanner';
 import QueryCard from './components/workspace/QueryCard';
 import ResultsSection from './components/results/ResultsSection';
 import HowQueryWorksPanel from './components/lesson/HowQueryWorksPanel';
 import DatasetBriefingCard from './components/workspace/DatasetBriefingCard';
 import StarterQueriesSection from './components/workspace/StarterQueriesSection';
-import {
-  mockDatasetBriefing,
-  mockStarterQueries,
-  mockTryAskingSuggestions,
-} from './mockData';
-import { Layers, BookOpen, Upload } from 'lucide-react';
+import { Layers, BookOpen, Upload, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const {
@@ -21,7 +18,10 @@ export default function App() {
     setActiveTab,
     datasetInfo,
     profile,
+    loadingProfile,
+    profileError,
     reloadProfile,
+    dbPath,
     queryText,
     setQueryText,
     queryMode,
@@ -40,7 +40,17 @@ export default function App() {
     setIsUploadOpen,
     isHelpOpen,
     setIsHelpOpen,
+    isUploading,
+    uploadError,
+    handleUploadFile,
   } = useNovaQuery();
+
+  const {
+    briefing,
+    loadingBriefing,
+    briefingError,
+    reloadBriefing,
+  } = useDatasetBriefing(dbPath, Boolean(profile));
 
   // Starter query card clicked: only fills the query input box without auto-running
   const handleSelectStarterQuery = (questionText) => {
@@ -53,11 +63,11 @@ export default function App() {
     setQueryText(suggestionText);
   };
 
-  // Active suggestions: backend suggested_queries prioritized over initial starters
+  // Active suggestions: backend suggested_queries prioritized over briefing.try_asking
   const activeSuggestions =
     queryResult?.suggested_queries && queryResult.suggested_queries.length > 0
       ? queryResult.suggested_queries
-      : mockTryAskingSuggestions;
+      : (briefing?.try_asking || []);
 
   return (
     <Shell
@@ -68,85 +78,136 @@ export default function App() {
       history={history}
       activeHistoryId={activeHistoryId}
       onSelectHistory={handleSelectHistory}
-      onRefreshSchema={() => reloadProfile()}
+      onRefreshSchema={() => reloadProfile(dbPath)}
       onOpenUpload={() => setIsUploadOpen(true)}
       onOpenHelp={() => setIsHelpOpen(true)}
     >
       {/* Tab 1: Workspace */}
       {activeTab === 'workspace' && (
         <div className="flex flex-col gap-6">
-          {/* 1. Dataset Ready Banner (Dismissible) */}
-          <DatasetReadyBanner
-            isDismissed={bannerDismissed}
-            onDismiss={() => setBannerDismissed(true)}
-            filename={datasetInfo.name}
-            rows={datasetInfo.rows}
-            cols={datasetInfo.cols}
-            onQuickPreview={() => {
-              const briefingEl = document.getElementById('dataset-briefing-section');
-              if (briefingEl) briefingEl.scrollIntoView({ behavior: 'smooth' });
-            }}
-          />
-
-          {/* 2. Query Card: Natural Language / SQL editor, Run button, Ctrl+Enter, Suggestion chips */}
-          <QueryCard
-            queryText={queryText}
-            onChangeQuery={setQueryText}
-            queryMode={queryMode}
-            onChangeMode={setQueryMode}
-            onRunQuery={() => runQuery()}
-            loading={loadingQuery}
-            filename={datasetInfo.name}
-            suggestions={activeSuggestions}
-            onSelectSuggestion={handleSelectSuggestion}
-          />
-
-          {/* 3. Query Execution Output: Results Area + Educational Lesson Panel */}
-          {(loadingQuery || queryError || queryResult) && (
-            <div id="results-and-lesson-section" className="flex flex-col lg:flex-row items-start gap-6">
-              {/* Left Column: Results Section (Table, Charts, SQL) */}
-              <div className="flex-1 min-w-0 w-full">
-                <ResultsSection
-                  loading={loadingQuery}
-                  error={queryError}
-                  result={queryResult}
-                  responseTime={responseTime}
-                  onRetry={() => runQuery()}
-                />
-              </div>
-
-              {/* Right Column: Educational Lesson Panel (Stacked on tablet/mobile) */}
-              <div className="w-full lg:w-[400px] xl:w-[440px] shrink-0">
-                <HowQueryWorksPanel
-                  loading={loadingQuery}
-                  error={queryError}
-                  // TODO(backend): lesson object returned by /api/query
-                  lesson={queryResult?.lesson || null}
-                  fallbackExplanation={queryResult?.explanation || ''}
-                  onSelectModifyIdea={(questionText) => {
-                    setQueryText(questionText);
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                  }}
-                />
-              </div>
+          {loadingProfile ? (
+            <div className="flex flex-col gap-6 animate-fadeIn">
+              <Skeleton className="w-full h-12 rounded-xl" />
+              <Skeleton className="w-full h-36 rounded-2xl" />
+              <Skeleton className="w-full h-48 rounded-2xl" />
             </div>
+          ) : !profile ? (
+            /* Empty State when no dataset active or loading failed */
+            <div className="flex flex-col items-center justify-center p-12 sm:p-16 bg-[#0d1322] border border-[#1a243a] rounded-2xl text-center gap-4 my-6 animate-fadeIn">
+              <div className="w-14 h-14 rounded-2xl bg-cyan-950/40 border border-cyan-800/40 flex items-center justify-center text-cyan-400">
+                <Upload className="w-7 h-7" />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <h2 className="text-base sm:text-lg font-semibold text-slate-100">
+                  Upload a dataset to get started
+                </h2>
+                <p className="text-xs text-slate-400 max-w-md">
+                  Upload a SQLite database or tabular file (.csv, .xlsx, .json, .parquet) to explore and query with AI.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsUploadOpen(true)}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition shadow-md shadow-cyan-950 active:scale-95 mt-1"
+              >
+                <Upload className="w-4 h-4" />
+                <span>Upload Dataset</span>
+              </button>
+              {profileError && (
+                <p className="text-[11px] font-mono text-rose-400/90 max-w-lg mt-2 px-3 py-1.5 rounded bg-rose-950/20 border border-rose-900/30">
+                  {profileError}
+                </p>
+              )}
+            </div>
+          ) : (
+            /* Active Dataset Workspace */
+            <>
+              {/* 1. Dataset Ready Banner (Dismissible) */}
+              <DatasetReadyBanner
+                isDismissed={bannerDismissed}
+                onDismiss={() => setBannerDismissed(true)}
+                filename={datasetInfo?.name || ''}
+                totalTables={datasetInfo?.totalTables || 1}
+                rows={datasetInfo?.rows || 0}
+                cols={datasetInfo?.cols || 0}
+                onQuickPreview={() => {
+                  const briefingEl = document.getElementById('dataset-briefing-section');
+                  if (briefingEl) briefingEl.scrollIntoView({ behavior: 'smooth' });
+                }}
+              />
+
+              {/* 2. Query Card: Natural Language / SQL editor, Run button, Ctrl+Enter, Suggestion chips */}
+              <QueryCard
+                queryText={queryText}
+                onChangeQuery={setQueryText}
+                queryMode={queryMode}
+                onChangeMode={setQueryMode}
+                onRunQuery={() => runQuery()}
+                loading={loadingQuery}
+                filename={datasetInfo?.name || ''}
+                suggestions={activeSuggestions}
+                onSelectSuggestion={handleSelectSuggestion}
+              />
+
+              {/* 3. Query Execution Output: Results Area + Educational Lesson Panel */}
+              {(loadingQuery || queryError || queryResult) && (
+                <div id="results-and-lesson-section" className="flex flex-col lg:flex-row items-start gap-6">
+                  {/* Left Column: Results Section (Table, Charts, SQL) */}
+                  <div className="flex-1 min-w-0 w-full">
+                    <ResultsSection
+                      loading={loadingQuery}
+                      error={queryError}
+                      result={queryResult}
+                      responseTime={responseTime}
+                      onRetry={() => runQuery()}
+                    />
+                  </div>
+
+                  {/* Right Column: Educational Lesson Panel */}
+                  <div className="w-full lg:w-[400px] xl:w-[440px] shrink-0">
+                    <HowQueryWorksPanel
+                      loading={loadingQuery}
+                      error={queryError}
+                      lesson={queryResult?.lesson || null}
+                      fallbackExplanation={queryResult?.explanation || ''}
+                      onSelectModifyIdea={(questionText) => {
+                        setQueryText(questionText);
+                        window.scrollTo({ top: 0, behavior: 'smooth' });
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* 4. Dataset Briefing & Starter Queries or Error State */}
+              {briefingError ? (
+                <div className="p-3.5 rounded-xl bg-[#0d1322] border border-[#1a243a] text-xs font-mono text-slate-400 flex items-center justify-between">
+                  <span>Couldn't load the dataset briefing</span>
+                  <button
+                    onClick={() => reloadBriefing(true)}
+                    className="text-cyan-400 hover:text-cyan-300 hover:underline text-[11px]"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div id="dataset-briefing-section">
+                    <DatasetBriefingCard
+                      loading={loadingBriefing}
+                      briefing={briefing}
+                      columns={profile?.columns || []}
+                    />
+                  </div>
+
+                  <StarterQueriesSection
+                    loading={loadingBriefing}
+                    starterQueries={briefing?.starter_queries || []}
+                    onSelectQuery={handleSelectStarterQuery}
+                  />
+                </>
+              )}
+            </>
           )}
-
-          {/* 4. Dataset Briefing Card: Schema metadata & Distribution Insight */}
-          <div id="dataset-briefing-section">
-            <DatasetBriefingCard
-              // TODO(backend): briefing will come from GET /api/dataset-briefing
-              briefing={mockDatasetBriefing}
-              columns={profile?.columns || []}
-            />
-          </div>
-
-          {/* 5. Recommended Starter Queries Curriculum (Beginner, Intermediate, Advanced) */}
-          <StarterQueriesSection
-            // TODO(backend): starterQueries will come from GET /api/starter-queries
-            starterQueries={mockStarterQueries}
-            onSelectQuery={handleSelectStarterQuery}
-          />
         </div>
       )}
 
@@ -179,17 +240,30 @@ export default function App() {
       {/* Upload Data Modal */}
       <Modal
         isOpen={isUploadOpen}
-        onClose={() => setIsUploadOpen(false)}
+        onClose={() => {
+          if (!isUploading) setIsUploadOpen(false);
+        }}
         title="Upload Dataset"
       >
         <div className="flex flex-col gap-4">
           <p className="text-xs text-slate-400">
             Select a database or tabular file to load into NovaQuery. Supported formats: .db, .sqlite, .sqlite3, .sql, .csv, .xlsx, .json, .parquet.
           </p>
-          <label className="border-2 border-dashed border-[#1a243a] hover:border-cyan-500/50 rounded-xl p-8 flex flex-col items-center justify-center gap-2 cursor-pointer transition bg-[#05080f]/50">
-            <Upload className="w-8 h-8 text-cyan-400" />
+
+          {uploadError && (
+            <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-800/40 text-rose-300 text-xs font-mono leading-relaxed">
+              {uploadError}
+            </div>
+          )}
+
+          <label className={`border-2 border-dashed border-[#1a243a] hover:border-cyan-500/50 rounded-xl p-8 flex flex-col items-center justify-center gap-2 transition bg-[#05080f]/50 ${isUploading ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}>
+            {isUploading ? (
+              <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin" />
+            ) : (
+              <Upload className="w-8 h-8 text-cyan-400" />
+            )}
             <span className="text-xs font-semibold text-slate-200">
-              Click to browse or drop file here
+              {isUploading ? 'Uploading and processing file...' : 'Click to browse or drop file here'}
             </span>
             <span className="text-[11px] text-slate-500 font-mono">
               Max file size 50MB
@@ -197,10 +271,14 @@ export default function App() {
             <input
               type="file"
               accept=".db,.sqlite,.sqlite3,.sql,.csv,.xlsx,.xls,.json,.parquet"
+              disabled={isUploading}
               className="hidden"
-              onChange={() => {
-                // Upload flow will be fully wired in Stage 5
-                setIsUploadOpen(false);
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  handleUploadFile(file);
+                  e.target.value = '';
+                }
               }}
             />
           </label>

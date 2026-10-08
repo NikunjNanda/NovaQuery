@@ -14,7 +14,7 @@ import { Database, Upload, HelpCircle, User, Table as TableIcon } from 'lucide-r
 export default function Navbar({
   activeTab,
   onSelectTab,
-  datasetInfo = { name: 'iris.csv', rows: 150, cols: 6 },
+  datasetInfo = null,
   onOpenUpload,
   onOpenHelp,
 }) {
@@ -41,14 +41,16 @@ export default function Navbar({
         </div>
 
         {/* Active Dataset Pill */}
-        {datasetInfo && (
+        {datasetInfo && datasetInfo.name && (
           <div className="hidden md:flex items-center gap-2 px-2.5 py-1 rounded-full bg-slate-900/90 border border-slate-800 text-xs text-slate-300 font-mono">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
             <TableIcon className="w-3.5 h-3.5 text-slate-400" />
             <span className="font-medium text-slate-200">{datasetInfo.name}</span>
             <span className="text-slate-500">•</span>
             <span className="text-slate-400">
-              {datasetInfo.rows} rows • {datasetInfo.cols} columns
+              {datasetInfo.totalTables > 1
+                ? `${datasetInfo.totalTables} tables`
+                : `${datasetInfo.rows} rows • ${datasetInfo.cols} columns`}
             </span>
           </div>
         )}

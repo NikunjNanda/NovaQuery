@@ -7,7 +7,8 @@ import { CheckCircle2, Eye, X } from 'lucide-react';
  * @param {Object} props
  * @param {boolean} props.isDismissed - Dismissed state
  * @param {Function} props.onDismiss - Dismiss callback
- * @param {string} props.filename - Active dataset filename (e.g. 'iris.csv')
+ * @param {string} props.filename - Active dataset filename
+ * @param {number} [props.totalTables=1] - Total tables count
  * @param {number} props.rows - Row count
  * @param {number} props.cols - Column count
  * @param {Function} [props.onQuickPreview] - Optional quick preview toggle callback
@@ -15,12 +16,13 @@ import { CheckCircle2, Eye, X } from 'lucide-react';
 export default function DatasetReadyBanner({
   isDismissed,
   onDismiss,
-  filename = 'iris.csv',
-  rows = 150,
-  cols = 6,
+  filename = '',
+  totalTables = 1,
+  rows = 0,
+  cols = 0,
   onQuickPreview,
 }) {
-  if (isDismissed) return null;
+  if (isDismissed || !filename) return null;
 
   return (
     <div className="bg-emerald-950/20 border border-emerald-800/40 rounded-xl px-3.5 py-2.5 flex items-center justify-between gap-3 shadow-sm select-none animate-fadeIn">
@@ -32,7 +34,7 @@ export default function DatasetReadyBanner({
           <span className="text-slate-600">/</span>
           <span className="text-slate-200 font-medium">{filename}</span>
           <span className="text-slate-400 text-[11px]">
-            {rows} rows × {cols} cols
+            {totalTables > 1 ? `${totalTables} tables` : `${rows} rows × ${cols} cols`}
           </span>
         </div>
       </div>

@@ -34,5 +34,13 @@ export const fetchProfile = async (dbPath = null) => {
     params: dbPath ? { db_path: dbPath } : {}
   });
   return response.data;
-}; 
+};
+
+export const fetchBriefing = async (dbPath = null, refresh = false) => {
+  const params = {};
+  if (dbPath) params.db_path = dbPath;
+  if (refresh) params.refresh = refresh;
+  const response = await axios.get(`${API_BASE}/briefing`, { params });
+  return response.data;
+};
 

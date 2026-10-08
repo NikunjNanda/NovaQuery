@@ -73,15 +73,39 @@ export default function ResultsSection({
 
   // Error state
   if (error) {
+    const errorStr = typeof error === 'string' ? error : (error?.message || JSON.stringify(error));
+    const isQuotaError =
+      errorStr.includes('RESOURCE_EXHAUSTED') ||
+      errorStr.includes('429') ||
+      errorStr.toLowerCase().includes('quota');
+
     return (
       <div className="bg-[#0d1322] border border-rose-900/50 rounded-2xl p-5 flex flex-col gap-3 shadow-xl animate-fadeIn">
         <div className="flex items-center gap-2.5 text-rose-400 font-semibold text-xs sm:text-sm font-mono">
           <AlertCircle className="w-4 h-4 shrink-0" />
           <span>Query Execution Error</span>
         </div>
-        <div className="bg-[#05080f] border border-rose-950/80 rounded-xl p-3.5 text-xs font-mono text-rose-300 leading-relaxed whitespace-pre-wrap">
-          {error}
-        </div>
+
+        {isQuotaError ? (
+          <div className="flex flex-col gap-2">
+            <div className="bg-[#05080f] border border-amber-900/40 rounded-xl p-3.5 text-xs text-amber-300 leading-relaxed font-sans">
+              The AI service has reached its daily limit. Please try again later.
+            </div>
+            <details className="text-[11px] font-mono text-slate-400 cursor-pointer group">
+              <summary className="hover:text-slate-200 select-none py-1">
+                Details
+              </summary>
+              <div className="mt-1 bg-[#05080f] border border-rose-950/80 rounded-xl p-3 text-xs font-mono text-rose-300 leading-relaxed whitespace-pre-wrap">
+                {errorStr}
+              </div>
+            </details>
+          </div>
+        ) : (
+          <div className="bg-[#05080f] border border-rose-950/80 rounded-xl p-3.5 text-xs font-mono text-rose-300 leading-relaxed whitespace-pre-wrap">
+            {errorStr}
+          </div>
+        )}
+
         <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono pt-1">
           <span>The query engine could not process this request.</span>
           {onRetry && (
@@ -198,6 +222,13 @@ export default function ResultsSection({
         <div className="flex flex-col gap-5">
           {/* Data Table */}
           <DataTable data={data} maxRows={100} />
+
+          {/* Truncated note */}
+          {result?.truncated && (
+            <div className="text-[11px] font-mono text-amber-400/90 -mt-2 px-1">
+              Showing the first 1000 rows
+            </div>
+          )}
 
           {/* Embedded Visual Distribution Preview (if data exists) */}
           {rowCount > 0 && (

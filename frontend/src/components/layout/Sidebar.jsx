@@ -52,16 +52,68 @@ export default function Sidebar({
   onClose,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
-  const [isTableExpanded, setIsTableExpanded] = useState(true);
+  const [expandedTables, setExpandedTables] = useState({});
 
-  const tableName = profile?.table_name || 'iris';
-  const totalRows = profile?.total_rows || 150;
-  const columns = profile?.columns || [];
+  const tables = React.useMemo(() => {
+    if (Array.isArray(profile?.tables) && profile.tables.length > 0) {
+      return profile.tables;
+    }
+    if (profile?.table_name && profile?.columns) {
+      return [{
+        table_name: profile.table_name,
+        total_rows: profile.total_rows || 0,
+        columns: profile.columns,
+      }];
+    }
+    return [];
+  }, [profile]);
 
-  // Filter columns and tables by search query
-  const filteredColumns = columns.filter((col) =>
-    col.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  React.useEffect(() => {
+    if (tables.length > 0) {
+      setExpandedTables((prev) => {
+        const next = { ...prev };
+        if (next[tables[0].table_name] === undefined) {
+          next[tables[0].table_name] = true;
+        }
+        return next;
+      });
+    }
+  }, [tables]);
+
+  const toggleTable = (name) => {
+    setExpandedTables((prev) => ({
+      ...prev,
+      [name]: !prev[name],
+    }));
+  };
+
+  // Filter tables and columns according to search query
+  const filteredTables = React.useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return tables;
+
+    return tables
+      .map((tbl) => {
+        const tableMatches = tbl.table_name.toLowerCase().includes(q);
+        const matchingCols = (tbl.columns || []).filter(
+          (col) =>
+            col.name.toLowerCase().includes(q) ||
+            (col.type && String(col.type).toLowerCase().includes(q))
+        );
+
+        if (tableMatches) {
+          return tbl;
+        }
+        if (matchingCols.length > 0) {
+          return {
+            ...tbl,
+            columns: matchingCols,
+          };
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }, [tables, searchQuery]);
 
   return (
     <>
@@ -120,45 +172,67 @@ export default function Sidebar({
 
         {/* Section 2: Collapsible Table & Column Tree */}
         <div className="flex-1 overflow-y-auto px-2 py-3 flex flex-col gap-4">
-          <div className="flex flex-col">
-            {/* Table Item Header */}
-            <button
-              onClick={() => setIsTableExpanded(!isTableExpanded)}
-              className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-900/60 text-left transition group"
-            >
-              <div className="flex items-center gap-1.5 min-w-0">
-                {isTableExpanded ? (
-                  <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
-                ) : (
-                  <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
-                )}
-                <TableIcon className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                <span className="text-xs font-mono font-medium text-slate-200 truncate group-hover:text-cyan-300">
-                  {tableName}
-                </span>
-              </div>
-              <span className="text-[10px] font-mono text-slate-500 shrink-0 pl-2">
-                {totalRows}r
-              </span>
-            </button>
+          <div className="flex flex-col gap-2">
+            {filteredTables.map((tbl, idx) => {
+              const isExpanded = searchQuery.trim()
+                ? true
+                : Boolean(expandedTables[tbl.table_name] ?? (idx === 0));
 
-            {/* Columns List */}
-            {isTableExpanded && (
-              <div className="mt-1 pl-6 pr-2 flex flex-col gap-1 border-l border-slate-800/60 ml-3.5">
-                {filteredColumns.map((col) => (
-                  <div
-                    key={col.name}
-                    className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-slate-900/40 text-xs font-mono group"
+              return (
+                <div key={tbl.table_name} className="flex flex-col">
+                  {/* Table Item Header */}
+                  <button
+                    onClick={() => toggleTable(tbl.table_name)}
+                    className="w-full flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-slate-900/60 text-left transition group"
                   >
-                    <span className="text-slate-400 group-hover:text-slate-200 truncate pr-2 text-[11px]">
-                      {col.name}
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      {isExpanded ? (
+                        <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                      ) : (
+                        <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                      <TableIcon className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+                      <span className="text-xs font-mono font-medium text-slate-200 truncate group-hover:text-cyan-300">
+                        {tbl.table_name}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono text-slate-500 shrink-0 pl-2">
+                      {tbl.total_rows ?? 0}r
                     </span>
-                    <Chip label={col.type || 'TEXT'} variant="type" className="shrink-0" />
-                  </div>
-                ))}
-                {filteredColumns.length === 0 && (
-                  <span className="text-[11px] text-slate-600 italic py-1">No matching columns</span>
-                )}
+                  </button>
+
+                  {/* Columns List */}
+                  {isExpanded && (
+                    <div className="mt-1 pl-6 pr-2 flex flex-col gap-1 border-l border-slate-800/60 ml-3.5">
+                      {(tbl.columns || []).map((col) => (
+                        <div
+                          key={col.name}
+                          className="flex items-center justify-between py-1 px-1.5 rounded hover:bg-slate-900/40 text-xs font-mono group"
+                        >
+                          <span className="text-slate-400 group-hover:text-slate-200 truncate pr-2 text-[11px]">
+                            {col.name}
+                          </span>
+                          <Chip label={col.type || 'TEXT'} variant="type" className="shrink-0" />
+                        </div>
+                      ))}
+                      {(!tbl.columns || tbl.columns.length === 0) && (
+                        <span className="text-[11px] text-slate-600 italic py-1">No columns</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {tables.length === 0 && (
+              <div className="px-3 py-6 text-center text-xs text-slate-600 font-mono italic">
+                No dataset loaded
+              </div>
+            )}
+
+            {tables.length > 0 && filteredTables.length === 0 && (
+              <div className="px-3 py-4 text-center text-[11px] text-slate-600 font-mono italic">
+                No matching tables or columns
               </div>
             )}
           </div>
