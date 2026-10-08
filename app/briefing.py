@@ -1,5 +1,6 @@
 import json
 import os
+import time 
 
 from langchain_core.prompts import PromptTemplate
 from sqlalchemy import create_engine, inspect, text
@@ -21,6 +22,8 @@ DIFFICULTY_LABELS = {
 }
 
 _cache: dict = {}
+_fail_cache: dict = {}
+FAIL_TTL_SECONDS = 300  # after an AI failure, reuse the fallback for 5 minutes 
 
 BRIEFING_PROMPT = PromptTemplate.from_template(
     """You are a friendly data teacher helping a beginner understand an uploaded dataset and learn SQL from it.
@@ -320,12 +323,21 @@ def _cache_key(target: str):
     stat = os.stat(target)
     return (os.path.abspath(target), stat.st_mtime_ns, stat.st_size)
 
-
 def get_briefing(target: str, refresh: bool = False) -> dict:
     key = _cache_key(target)
+
+    # 1. A good result (AI, or fallback when there is no API key) is reused until the file changes
     if not refresh and key in _cache:
         print("Briefing: cache hit")
         return _cache[key]
+
+    # 2. If Gemini failed recently, reuse the fallback for a few minutes instead of retrying
+    #    on every page load (each retry would waste free-tier quota)
+    if not refresh and key in _fail_cache:
+        failed_at, failed_result = _fail_cache[key]
+        if time.time() - failed_at < FAIL_TTL_SECONDS:
+            print("Briefing: using recent fallback (AI failed recently)")
+            return failed_result
 
     engine = create_engine(target) if "://" in target else create_engine(f"sqlite:///{os.path.abspath(target)}")
     try:
@@ -341,7 +353,12 @@ def get_briefing(target: str, refresh: bool = False) -> dict:
     if result is None:
         result = _fallback_briefing(schema)
 
-    # Don't cache a fallback that only happened because Gemini failed temporarily
     if result["source"] == "ai" or not llm:
+        # Real AI result, or the permanent no-API-key fallback
         _cache[key] = result
-    return result 
+        _fail_cache.pop(key, None)
+    else:
+        # Gemini failed (quota, timeout, bad output): remember it briefly, don't cache it for good
+        _fail_cache[key] = (time.time(), result)
+
+    return result
