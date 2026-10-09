@@ -7,6 +7,15 @@ class LessonStep(BaseModel):
     sql: str                   # SQL fragment for this clause
     explanation: str = ""      # plain-English explanation (may be empty if the AI call failed)
 
+class OverviewPoint(BaseModel):
+    label: str
+    text: str
+
+
+class Overview(BaseModel):
+    paragraph: str
+    points: List[OverviewPoint] = Field(default_factory=list)
+
 
 class ModifyIdea(BaseModel):
     title: str
@@ -67,6 +76,8 @@ class BriefingResponse(BaseModel):
     description: str
     classification: Optional[Classification] = None
     insight: Optional[Insight] = None
+    overview: Optional[Overview] = None 
     starter_queries: List[StarterQuery]
     try_asking: List[str]
     source: Literal["ai", "fallback"] 
+

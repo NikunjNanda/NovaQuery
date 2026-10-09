@@ -58,11 +58,15 @@ def _save_disk(key: str, result: dict):
 BRIEFING_PROMPT = PromptTemplate.from_template(
     """You are a friendly data teacher helping a beginner understand an uploaded dataset and learn SQL from it.
 
-    Dataset (JSON; includes a few sample rows per table): {schema_json}
+    Dataset (JSON; includes statistics, top values of category columns, and a few sample rows per table): {schema_json}
 
     Return ONLY valid JSON (no markdown, no commentary) in exactly this format:
     {{
         "description": "2-3 plain sentences describing what this data contains.",
+        "overview": {{
+            "paragraph": "A detailed paragraph of 5-7 plain sentences: what the data appears to be about, what kind of information the columns record, and notable ranges, categories or data quality.",
+            "explore": "One sentence on the kinds of questions this data can answer."
+        }},
         "insight": {{
             "category": "Short label, e.g. Distribution Insight",
             "description": "1-2 sentences about something worth checking, using only columns and values shown above."
@@ -87,12 +91,13 @@ BRIEFING_PROMPT = PromptTemplate.from_template(
       Intermediate: GROUP BY, COUNT, AVG, MIN, MAX (a simple JOIN only if there are several related tables).
       Advanced: HAVING, subqueries, window functions such as RANK() OVER, CASE WHEN.
     - Use ONLY tables and columns that exist above. Each question must be answerable with a single SELECT.
-    - Describe only what the data itself shows. Do NOT invent background facts (source, author, year, purpose).
+    - In the overview paragraph, use ONLY facts and numbers from the statistics above (min, max, avg, top values, missing counts).
+      Do NOT invent background facts (source, author, year, purpose).
     - Set "classification" to null, unless this is clearly a well-known public dataset; then use
       {{"type": "...", "origin": "..."}}.
-    - Never quote sample values at length, and never repeat personal details such as emails.
+    - Never repeat personal details such as names or emails from the sample rows.
     - tags: 1-3 SQL keywords per card. try_asking: exactly 3 short questions."""
-)
+) 
 
 
 def simplify_type(raw_type) -> str:
@@ -109,9 +114,16 @@ def simplify_type(raw_type) -> str:
 
 
 # ---------- reading the dataset ----------
+def _num(value):
+    return round(float(value), 2) if value is not None else None
+
+
+def _date_str(value):
+    return None if value is None else str(value)[:19].replace(" 00:00:00", "")
+
 
 def collect_schema(engine) -> list:
-    """Structure, row counts, distinct counts for text columns, and a few sample rows."""
+    """Structure, row counts, per-column statistics, top values of category columns, and sample rows."""
     inspector = inspect(engine)
     quote = engine.dialect.identifier_preparer.quote
     tables = []
@@ -122,22 +134,56 @@ def collect_schema(engine) -> list:
             all_columns = inspector.get_columns(table)
             columns = all_columns[:MAX_COLUMNS]
             pk_names = set(inspector.get_pk_constraint(table).get("constrained_columns") or [])
-            row_count = int(conn.execute(text(f"SELECT COUNT(*) FROM {q_table}")).scalar() or 0)
 
-            cols = []
+            # One aggregate query per table
+            parts = ["COUNT(*)"]
+            meta = []
             for col in columns:
+                q = quote(col["name"])
                 kind = simplify_type(col["type"])
-                distinct = None
+                parts.append(f"COUNT({q})")
                 if kind == "TEXT":
-                    distinct = int(conn.execute(
-                        text(f"SELECT COUNT(DISTINCT {quote(col['name'])}) FROM {q_table}")
-                    ).scalar() or 0)
-                cols.append({
+                    parts.append(f"COUNT(DISTINCT {q})")
+                elif kind in ("INT", "REAL"):
+                    parts += [f"MIN({q})", f"MAX({q})", f"AVG({q})"]
+                elif kind == "DATE":
+                    parts += [f"MIN({q})", f"MAX({q})"]
+                meta.append((col, kind))
+
+            row = conn.execute(text(f"SELECT {', '.join(parts)} FROM {q_table}")).fetchone()
+            row_count = int(row[0])
+
+            idx = 1
+            cols = []
+            for col, kind in meta:
+                non_null = int(row[idx])
+                idx += 1
+                info = {
                     "name": col["name"],
                     "kind": kind,
                     "is_pk": col["name"] in pk_names,
-                    "distinct": distinct,
-                })
+                    "missing": row_count - non_null,
+                    "distinct": None,
+                }
+                if kind == "TEXT":
+                    info["distinct"] = int(row[idx])
+                    idx += 1
+                    if 1 <= info["distinct"] <= 8:
+                        top = conn.execute(text(
+                            f"SELECT {quote(col['name'])}, COUNT(*) FROM {q_table} "
+                            f"GROUP BY {quote(col['name'])} ORDER BY COUNT(*) DESC LIMIT 8"
+                        )).fetchall()
+                        info["top_values"] = [
+                            {"value": str(v)[:CELL_MAX_CHARS], "count": int(c)}
+                            for v, c in top if v is not None
+                        ]
+                elif kind in ("INT", "REAL"):
+                    info["min"], info["max"], info["avg"] = _num(row[idx]), _num(row[idx + 1]), _num(row[idx + 2])
+                    idx += 3
+                elif kind == "DATE":
+                    info["min"], info["max"] = _date_str(row[idx]), _date_str(row[idx + 1])
+                    idx += 2
+                cols.append(info)
 
             sample = []
             if SEND_SAMPLE_ROWS and row_count:
@@ -157,8 +203,7 @@ def collect_schema(engine) -> list:
                 "columns": cols,
                 "sample_rows": sample,
             })
-    return tables
-
+    return tables 
 
 # ---------- cards ----------
 
@@ -218,6 +263,132 @@ def _is_id_like(col: dict) -> bool:
 
 
 # ---------- fallback (no Gemini) ----------
+
+def _fmt(n):
+    if n is None:
+        return "n/a"
+    return f"{n:,.2f}".rstrip("0").rstrip(".") if isinstance(n, float) else f"{n:,}"
+
+
+def _names(items, limit=8):
+    names = [c["name"] for c in items[:limit]]
+    extra = len(items) - limit
+    return ", ".join(names) + (f" and {extra} more" if extra > 0 else "")
+
+
+def _facts_overview(schema: list) -> dict:
+    """Detailed paragraph and key-fact points built only from computed statistics."""
+    main = schema[0]
+    t, cols, rows = main["name"], main["columns"], main["rows"]
+
+    by_kind = {"TEXT": [], "INT": [], "REAL": [], "DATE": [], "BOOL": []}
+    for c in cols:
+        by_kind.setdefault(c["kind"], []).append(c)
+
+    numeric_cols = by_kind["INT"] + by_kind["REAL"]
+    ids = [c for c in cols if _is_id_like(c)]
+    measures = [c for c in numeric_cols if not _is_id_like(c)]
+    dates = by_kind["DATE"]
+    cats = [c for c in cols if c.get("top_values")]
+    missing_cols = [c for c in cols if c.get("missing")]
+    total_missing = sum(c.get("missing", 0) for c in cols)
+
+    # ---- paragraph ----
+    sentences = []
+    first = (f"This dataset has {len(schema)} table(s); the main table, '{t}', holds {rows:,} rows "
+             f"and {main['total_columns']} columns.")
+    if len(schema) > 1:
+        first += f" The other tables are {', '.join(x['name'] for x in schema[1:])}."
+    sentences.append(first)
+
+    kinds = []
+    if by_kind["TEXT"]:
+        kinds.append(f"{len(by_kind['TEXT'])} text")
+    if numeric_cols:
+        kinds.append(f"{len(numeric_cols)} numeric")
+    if dates:
+        kinds.append(f"{len(dates)} date/time")
+    if by_kind["BOOL"]:
+        kinds.append(f"{len(by_kind['BOOL'])} true/false")
+    if kinds:
+        sentences.append("Its columns break down into " + ", ".join(kinds) + ".")
+
+    for c in measures[:2]:
+        sentences.append(
+            f"'{c['name']}' ranges from {_fmt(c.get('min'))} to {_fmt(c.get('max'))}, "
+            f"averaging {_fmt(c.get('avg'))}."
+        )
+    for c in dates[:1]:
+        if c.get("min") and c.get("max"):
+            sentences.append(f"'{c['name']}' covers the period from {c['min']} to {c['max']}.")
+    for c in cats[:1]:
+        top = c["top_values"][0]
+        sentences.append(
+            f"'{c['name']}' is a category column with {c['distinct']} distinct value(s), "
+            f"the most common being '{top['value']}' ({top['count']:,} rows)."
+        )
+    sentences.append(
+        "There are no missing values." if not total_missing
+        else f"{total_missing:,} values are missing across {len(missing_cols)} column(s)."
+    )
+
+    # ---- points ----
+    size = f"{rows:,} rows x {main['total_columns']} columns in '{t}'"
+    if len(schema) > 1:
+        size += f" (plus {len(schema) - 1} more table(s))"
+    points = [{"label": "Size", "text": size}]
+
+    groups = []
+    if by_kind["TEXT"]:
+        groups.append("Text: " + _names(by_kind["TEXT"]))
+    if numeric_cols:
+        groups.append("Numeric: " + _names(numeric_cols))
+    if dates:
+        groups.append("Date/time: " + _names(dates))
+    if by_kind["BOOL"]:
+        groups.append("True/false: " + _names(by_kind["BOOL"]))
+    if groups:
+        points.append({"label": "Columns", "text": "; ".join(groups)})
+
+    if ids:
+        points.append({"label": "Identifiers", "text": f"{_names(ids)} (used to tell rows apart)"})
+
+    if measures:
+        points.append({"label": "Numeric measures", "text": "; ".join(
+            f"{c['name']}: {_fmt(c.get('min'))} to {_fmt(c.get('max'))} (avg {_fmt(c.get('avg'))})"
+            for c in measures[:4]
+        )})
+
+    dated = [c for c in dates if c.get("min") and c.get("max")]
+    if dated:
+        points.append({"label": "Time coverage", "text": "; ".join(
+            f"{c['name']}: {c['min']} to {c['max']}" for c in dated[:2]
+        )})
+
+    if cats:
+        points.append({"label": "Categories", "text": "; ".join(
+            f"{c['name']}: " + ", ".join(f"{v['value']} ({v['count']:,})" for v in c["top_values"][:3])
+            for c in cats[:3]
+        )})
+
+    if not total_missing:
+        quality = f"Complete: no missing values in any of the {len(cols)} columns"
+    else:
+        quality = "Missing values in " + ", ".join(f"{c['name']} ({c['missing']:,})" for c in missing_cols[:5])
+    points.append({"label": "Data quality", "text": quality})
+
+    uses = ["previewing and filtering rows"]
+    if cats:
+        uses.append("grouping and counting by category")
+    if cats and measures:
+        uses.append("comparing averages across groups")
+    elif measures:
+        uses.append("finding minimums, maximums and rankings")
+    if dates:
+        uses.append("looking at activity over time")
+    points.append({"label": "Good for", "text": ", ".join(uses)})
+
+    return {"paragraph": " ".join(sentences), "points": points}
 
 def _fallback_briefing(schema: list) -> dict:
     table = schema[0]
@@ -285,10 +456,11 @@ def _fallback_briefing(schema: list) -> dict:
         "description": description,
         "classification": None,
         "insight": None,
+        "overview": _facts_overview(schema),
         "starter_queries": cards,
         "try_asking": _derive_try_asking(cards),
         "source": "fallback",
-    }
+    } 
 
 
 # ---------- Gemini ----------
@@ -333,17 +505,26 @@ def _ai_briefing(schema: list):
     if not try_asking:
         try_asking = _derive_try_asking(cards)
 
+    overview = _facts_overview(schema)
+    raw_overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
+    ai_paragraph = str(raw_overview.get("paragraph") or "").strip()
+    if len(ai_paragraph) >= 80:
+        overview["paragraph"] = ai_paragraph
+    explore = str(raw_overview.get("explore") or "").strip()
+    if explore:
+        overview["points"] = [p for p in overview["points"] if p["label"] != "Good for"]
+        overview["points"].append({"label": "What you can explore", "text": explore})
     return {
         "success": True,
         "title": "What this data is about",
         "description": description,
         "classification": classification,
         "insight": insight,
+        "overview": overview, 
         "starter_queries": cards,
         "try_asking": try_asking,
         "source": "ai",
-    }
-
+    } 
 
 # ---------- public entry point ----------
 
