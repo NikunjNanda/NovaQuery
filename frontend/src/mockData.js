@@ -30,6 +30,17 @@ export const mockDatasetBriefing = {
   title: "What this data is about",
   description:
     "The Iris dataset contains 150 physical measurements of three iris flower species: setosa, versicolor, and virginica. It is commonly used to explore classification, grouping, and continuous numerical distributions.",
+  overview: {
+    paragraph:
+      "The Iris dataset contains 150 physical measurements of three iris flower species: setosa, versicolor, and virginica. It is commonly used to explore classification, grouping, and continuous numerical distributions.",
+    points: [
+      { label: "Scale", text: "150 rows across 5 columns" },
+      { label: "Key columns", text: "sepal_length, sepal_width, petal_length, petal_width" },
+      { label: "Categories", text: "species: Setosa (50), Versicolor (50), Virginica (50)" },
+      { label: "Data quality", text: "Complete: no missing values in any of the 5 columns" },
+      { label: "Good for", text: "previewing and filtering rows, grouping and counting by category" },
+    ],
+  },
   classification: {
     category: "CLASSIFICATION",
     type: "Multivariate",
