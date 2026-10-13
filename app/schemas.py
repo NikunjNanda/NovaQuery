@@ -45,6 +45,7 @@ class QueryResponse(BaseModel):
     truncated: bool = False
     lesson: Optional[Lesson] = None
     error: Optional[str] = None
+    postgres_sql: Optional[str] = None  
 
 class Classification(BaseModel):
     category: str = "CLASSIFICATION"

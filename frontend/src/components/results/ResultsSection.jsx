@@ -134,6 +134,7 @@ export default function ResultsSection({
 
   const rowCount = data.length;
   const sql = result.generated_sql || '';
+  const postgresSql = result.postgres_sql || '';
   const explanation = result.explanation || '';
   // // TODO(backend): add `purpose` to the query response
   const purpose = result.purpose || null;
@@ -275,7 +276,7 @@ export default function ResultsSection({
           )}
 
           {/* Generated SQL block */}
-          {sql && <SqlBlock sql={sql} dialect="SQLite" />}
+          {sql && <SqlBlock sql={sql} postgresSql={postgresSql} dialect="SQLite" />}
         </div>
       )}
 
@@ -296,7 +297,7 @@ export default function ResultsSection({
             </div>
           )}
           {sql ? (
-            <SqlBlock sql={sql} dialect="SQLite" />
+            <SqlBlock sql={sql} postgresSql={postgresSql} dialect="SQLite" />
           ) : (
             <div className="text-slate-500 text-xs font-mono p-4">No SQL generated yet.</div>
           )}

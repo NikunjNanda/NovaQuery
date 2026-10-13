@@ -1,7 +1,10 @@
 import os
 import json
+from typing import List,Optional 
+from pydantic import BaseModel, Field, field_validator 
 import sqlite3
-from pathlib import Path
+from pathlib import Path 
+import random 
 
 import sqlglot 
 from sqlglot import exp
@@ -153,6 +156,12 @@ def build_clause_steps(sql: str) -> list:
 
     return steps
 
+def to_postgres(sql: str) -> Optional[str]:
+    """Converts the SQLite query to PostgreSQL. Returns None if conversion fails."""
+    try:
+        return sqlglot.transpile(sql, read="sqlite", write="postgres")[0]
+    except Exception:
+        return None 
 
 def _execute_readonly(db_path: str, sql: str):
     """Runs SQL on a read-only SQLite connection and always closes it."""
@@ -241,6 +250,102 @@ def generate_teacher_content(question: str, sql_query: str, schema: str) -> dict
         ),
     }
 
+import random
+
+class QuizQuestion(BaseModel):
+    question: str
+    options: List[str] = Field(min_length=4, max_length=4)
+    correct_index: int
+    explanation: str
+    topic: str = "query"  # clause | result | schema | variation
+
+    @field_validator("correct_index")
+    @classmethod
+    def _in_range(cls, v):
+        if not 0 <= v <= 3:
+            raise ValueError("correct_index must be 0-3")
+        return v
+
+
+QUIZ_PROMPT = PromptTemplate.from_template(
+    """You are a friendly SQL teacher. Write {n} multiple-choice questions for a beginner
+    who just ran the query below. Every question MUST be about THIS dataset and THIS query.
+
+    Database Schema: {schema}
+    User Question: {question}
+    Generated SQL: {sql_query}
+    Result columns: {columns}
+    Sample result rows (first 5): {rows}
+    Total rows returned: {row_count}
+
+    Return ONLY valid JSON (no markdown, no commentary) in exactly this format:
+    {{
+        "questions": [
+            {{
+                "question": "...",
+                "options": ["A", "B", "C", "D"],
+                "correct_index": 0,
+                "explanation": "1-2 sentences on why the answer is right.",
+                "topic": "clause"
+            }}
+        ]
+    }}
+
+    Rules:
+    - Mix topics: at least one about what a specific clause in this SQL does ("clause"),
+      one about interpreting the actual result using real values shown above ("result"),
+      and one about how the SQL would change for a small variation of the question ("variation").
+    - Use only real table and column names from the schema and real values from the sample rows.
+    - Exactly 4 options, exactly one correct, with plausible wrong answers.
+    - Do not ask anything that needs data you were not shown.
+    - Keep everything short and beginner-friendly."""
+)
+
+
+def generate_quiz(question: str, sql_query: str, db_path: str, static_questions: list, n: int = 5) -> dict:
+    """Returns {"source": "ai"|"static", "questions": [...]}. Never raises."""
+    fallback = {"source": "static", "questions": static_questions}
+    if not llm or "://" in str(db_path):
+        return fallback
+
+    try:
+        validate_sql_security(sql_query)  # never trust SQL sent from the browser
+        rows, _ = _execute_readonly(db_path, sql_query)
+        db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
+        columns = list(rows[0].keys()) if rows else []
+
+        res = (QUIZ_PROMPT | llm).invoke({
+            "n": n,
+            "schema": db.get_table_info(),
+            "question": question,
+            "sql_query": sql_query,
+            "columns": columns,
+            "rows": json.dumps(rows[:5], default=str),
+            "row_count": len(rows),
+        })
+        raw = _extract_json(_text(res.content)).get("questions") or []
+    except Exception as e:
+        print(f"Quiz generation failed: {e}")
+        return fallback
+
+    good, seen = [], set()
+    for item in raw:
+        try:
+            q = QuizQuestion(**item)
+        except Exception:
+            continue  # drop malformed questions
+        if len(set(q.options)) != 4 or q.question in seen:
+            continue
+        seen.add(q.question)
+        # LLMs tend to put the right answer first; shuffle and remap the index
+        correct_text = q.options[q.correct_index]
+        random.shuffle(q.options)
+        q.correct_index = q.options.index(correct_text)
+        good.append(q.model_dump())
+
+    return {"source": "ai", "questions": good} if good else fallback 
+
+
 def _friendly_error(e: Exception) -> str:
     msg = str(e)
     if "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
@@ -316,6 +421,7 @@ def run_natural_language_query(
             return QueryResponse(
                 success=True,
                 generated_sql=cleaned_sql,
+                postgres_sql=to_postgres(cleaned_sql), 
                 data=rows,
                 results=rows,
                 explanation=teacher["explanation"],
@@ -326,7 +432,7 @@ def run_natural_language_query(
                 truncated=truncated,
                 lesson=teacher["lesson"],
             ).model_dump()
-
+ 
         except SecurityException as se:
             return _error_response(str(se), sql=cleaned_sql, attempts=attempts + 1)
 

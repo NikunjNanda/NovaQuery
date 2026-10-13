@@ -3,12 +3,9 @@ import axios from 'axios';
 // Change this line to include /api
 const API_BASE = 'http://localhost:8000/api';
 
-export const executeQuery = async (question, dbPath, dialect = 'SQLite') => {
-  const response = await axios.post(`${API_BASE}/query`, {
-    question: question,
-    db_path: dbPath,
-    dialect: dialect
-  });
+export const executeQuery = async (question, dbPath, dialect = 'SQLite', history = []) => {
+  const body = { question, db_path: dbPath, dialect, ...(history.length ? { history } : {}) };
+  const response = await axios.post(`${API_BASE}/query`, body);
   return response.data;
 };
 

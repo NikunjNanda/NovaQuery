@@ -144,6 +144,11 @@ export function useNovaQuery() {
   const runQuery = useCallback(async (customQuery = null) => {
     const questionToRun = (customQuery !== null ? customQuery : queryText).trim();
     if (!questionToRun) return;
+    const recent = history
+    .filter((h) => h.status === 'executed' && h.sql)
+    .slice(0, 2)
+    .reverse()
+    .map((h) => ({ question: h.question, sql: h.sql })); 
 
     setLoadingQuery(true);
     setQueryError(null);
@@ -151,7 +156,7 @@ export function useNovaQuery() {
     const startTime = performance.now();
 
     try {
-      const res = await executeQuery(questionToRun, dbPath, 'SQLite');
+      const res = await executeQuery(questionToRun, dbPath, 'SQLite',recent); 
       const endTime = performance.now();
       const elapsed = endTime - startTime;
       setResponseTime(elapsed);
@@ -159,7 +164,7 @@ export function useNovaQuery() {
       // Handle backend response error property
       if (res && res.success === false) {
         throw new Error(res.error || 'Query execution returned unsuccessful.');
-      }
+      } 
 
       // Backward compatible extraction of data rows:
       const dataRows = res?.data || res?.results || (Array.isArray(res) ? res : []);
@@ -170,6 +175,7 @@ export function useNovaQuery() {
       const formattedResult = {
         data: dataRows,
         generated_sql: res?.generated_sql || '',
+         postgres_sql: res?.postgres_sql || '',
         explanation: res?.explanation || '',
         purpose: res?.purpose || null,
         suggested_queries: Array.isArray(res?.suggested_queries) ? res.suggested_queries : [],
@@ -177,7 +183,7 @@ export function useNovaQuery() {
         row_count: res?.row_count ?? dataRows.length,
         truncated: Boolean(res?.truncated),
         lesson: lessonData,
-      };
+      };  
 
       setQueryResult(formattedResult);
 
@@ -186,11 +192,12 @@ export function useNovaQuery() {
         id: `hist-${Date.now()}`,
         question: questionToRun,
         sql: res?.generated_sql || '',
+        postgresSql: res?.postgres_sql || '', 
         status: 'executed',
         executedAt: new Date().toISOString(),
         executionTimeMs: elapsed,
         rowCount: dataRows.length,
-      };
+      }; 
 
       setHistory((prev) => [newHistoryItem, ...prev]);
       setActiveHistoryId(newHistoryItem.id);
@@ -225,16 +232,16 @@ export function useNovaQuery() {
     } finally {
       setLoadingQuery(false);
     }
-  }, [queryText, dbPath]);
+  }, [queryText, dbPath , history]); 
 
   const handleSelectHistory = (item) => {
     setActiveHistoryId(item.id);
     setQueryText(item.question);
     if (item.sql) {
       // Re-populate query result view if available
-      setQueryResult((prev) => prev ? { ...prev, generated_sql: item.sql } : null);
+      setQueryResult((prev) => prev ? { ...prev, generated_sql: item.sql,postgres_sql: item.postgresSql || ''  } : null);
     }
-  };
+  }; 
 
   return {
     activeTab,

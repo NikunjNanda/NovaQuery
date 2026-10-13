@@ -5,14 +5,14 @@ import shutil
 from typing import Optional 
 from fastapi import FastAPI, HTTPException, File, UploadFile 
 from fastapi.middleware.cors import CORSMiddleware 
-from pydantic import BaseModel 
+from pydantic import BaseModel , Field 
 from sqlalchemy import create_engine, inspect, text 
 from app.briefing import get_briefing
 from app.schemas import BriefingResponse 
 import pandas as pd  
 import sqlite3  
 
-from app.query_engine import run_natural_language_query, DEFAULT_DB_PATH 
+from app.query_engine import run_natural_language_query, DEFAULT_DB_PATH , generate_quiz 
 
 app = FastAPI(title="NovaQuery AI Engine") 
 
@@ -97,7 +97,17 @@ class QueryRequest(BaseModel):
     dialect: Optional[str] = "SQLite"
 
 class ConnectionRequest(BaseModel):
-    connection_string: str
+    connection_string: str 
+
+class QuizRequest(BaseModel):
+    question: str
+    generated_sql: str
+    db_path: Optional[str] = None
+    num_questions: int = Field(5, ge=3, le=10)
+
+# Backend fallback. Keep this empty if your 15 static questions live in the frontend.
+STATIC_QUESTIONS: list = [] 
+
 
 @app.get("/")
 async def read_root():
@@ -153,6 +163,27 @@ async def process_query(payload: QueryRequest):
     except Exception as e:
         print(f"Error processing query: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
+
+@app.post("/api/quiz")
+def generate_quiz_endpoint(payload: QuizRequest):  # plain def: runs the blocking LLM call in a threadpool
+    if not payload.question.strip() or not payload.generated_sql.strip():
+        raise HTTPException(status_code=400, detail="Question and SQL are required.")
+
+    target_db = resolve_target(payload.db_path)
+
+    try:
+        result = generate_quiz(
+            question=payload.question,
+            sql_query=payload.generated_sql,
+            db_path=target_db,
+            static_questions=STATIC_QUESTIONS,
+            n=payload.num_questions,
+        )
+        return {"success": True, **result}
+    except Exception as e:
+        print(f"Quiz endpoint error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Quiz generation failed: {str(e)}") 
+
 
 @app.post("/api/upload-db")
 async def upload_database(file: UploadFile = File(...)):
