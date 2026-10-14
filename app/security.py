@@ -1,48 +1,45 @@
 import sqlglot
 from sqlglot import exp
 
+
 class SecurityException(Exception):
-    """Custom exception raised when a query fails AST security validation."""
-    pass 
+    """Raised when a query fails AST security validation."""
+    pass
+
+
+ALLOWED_ROOTS = (exp.Select, exp.Union, exp.Intersect, exp.Except)
+FORBIDDEN_NODES = (exp.Insert, exp.Update, exp.Delete, exp.Drop, exp.Create, exp.Alter)
+
 
 def validate_sql_security(sql_query: str) -> bool:
-    """
-    Parses a SQL string into an Abstract Syntax Tree (AST) using SQLGlot 
-    and verifies that it contains ONLY read-only SELECT operations. 
-    """
+    """Allow only a single read-only SELECT (including CTEs and UNION/INTERSECT/EXCEPT)."""
+    if not sql_query or not sql_query.strip():
+        raise SecurityException("Security Violation: Empty query provided.")
+
     try:
-        # Parse the SQL string into AST expression nodes
-        parsed_expressions = sqlglot.parse(sql_query, read="sqlite")
-        
-        if not parsed_expressions:
-            raise SecurityException("Security Violation: Empty query provided.")
+        parsed = sqlglot.parse(sql_query, read="sqlite")
+    except sqlglot.errors.SqlglotError as e:   # covers ParseError and TokenError
+        raise SecurityException(f"Invalid SQL syntax generated: {e}")
 
-        for expression in parsed_expressions:
-            if expression is None:
-                continue
+    statements = [s for s in parsed if s is not None]
+    if not statements:
+        raise SecurityException("Security Violation: Empty query provided.")
+    if len(statements) > 1:
+        raise SecurityException("Security Violation: Multiple statements are not allowed.")
 
-            # Check root statement type: Only allow SELECT
-            if not isinstance(expression, exp.Select):
-                stmt_type = type(expression).__name__.upper()
-                raise SecurityException(
-                    f"Security Violation: Query type '{stmt_type}' is not allowed. Only SELECT queries are permitted."
-                )
+    expression = statements[0]
 
-            # Deep inspection: Scan all sub-nodes to prevent nested modification statements
-            # Removed exp.Truncate (does not exist in sqlglot.expressions)
-            forbidden_nodes = (
-                exp.Insert, exp.Update, exp.Delete, exp.Drop, 
-                exp.Create, exp.Alter
+    if not isinstance(expression, ALLOWED_ROOTS):
+        stmt_type = type(expression).__name__.upper()
+        raise SecurityException(
+            f"Security Violation: Query type '{stmt_type}' is not allowed. "
+            "Only SELECT queries are permitted."
+        )
+
+    for node in expression.walk():
+        if isinstance(node, FORBIDDEN_NODES):
+            raise SecurityException(
+                f"Security Violation: Forbidden statement '{type(node).__name__.upper()}' detected inside query."
             )
-            
-            for node in expression.walk():
-                if isinstance(node, forbidden_nodes):
-                    node_type = type(node).__name__.upper()
-                    raise SecurityException(
-                        f"Security Violation: Forbidden statement '{node_type}' detected inside query."
-                    )
 
-        return True
-
-    except sqlglot.errors.ParseError as e:
-        raise SecurityException(f"Invalid SQL syntax generated: {str(e)}")
+    return True 
