@@ -9,6 +9,7 @@ class SecurityException(Exception):
 
 ALLOWED_ROOTS = (exp.Select, exp.Union, exp.Intersect, exp.Except)
 FORBIDDEN_NODES = (exp.Insert, exp.Update, exp.Delete, exp.Drop, exp.Create, exp.Alter)
+FORBIDDEN_FUNCTIONS = {"load_extension"}   # <-- added
 
 
 def validate_sql_security(sql_query: str) -> bool:
@@ -40,6 +41,11 @@ def validate_sql_security(sql_query: str) -> bool:
         if isinstance(node, FORBIDDEN_NODES):
             raise SecurityException(
                 f"Security Violation: Forbidden statement '{type(node).__name__.upper()}' detected inside query."
+            )
+        # <-- added
+        if isinstance(node, exp.Anonymous) and str(node.this).lower() in FORBIDDEN_FUNCTIONS:
+            raise SecurityException(
+                f"Security Violation: Function '{node.this}' is not allowed."
             )
 
     return True 
