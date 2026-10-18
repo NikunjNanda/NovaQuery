@@ -1,12 +1,12 @@
 import os
 import json
-from typing import List,Optional 
-from pydantic import BaseModel, Field, field_validator 
+import random
+from typing import List, Optional
+from pydantic import BaseModel, Field, field_validator
 import sqlite3
-from pathlib import Path 
-import random 
+from pathlib import Path
 
-import sqlglot 
+import sqlglot
 from sqlglot import exp
 from dotenv import load_dotenv
 
@@ -24,12 +24,12 @@ DEFAULT_DB_PATH = "company.db"
 MAX_ROWS = 1000  # cap rows sent to the browser
 
 # Initialize Gemini LLM
+# (no temperature setting: gemini-3.6-flash ignores it and prints a warning)
 api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.6-flash", 
+    model="gemini-3.6-flash",
     google_api_key=api_key,
-    temperature=0,
-) if api_key else None  
+) if api_key else None
 
 # Correction prompt used when SQLite execution fails
 CORRECTION_PROMPT = PromptTemplate.from_template(
@@ -57,7 +57,7 @@ EXPLANATION_PROMPT = PromptTemplate.from_template(
         "explanation": "1-2 simple sentences describing what the query does.",
         "purpose": "One short sentence on why someone would run this query.",
         "suggested_queries": ["Follow-up question 1?", "Follow-up question 2?", "Follow-up question 3?"],
-        "lesson": {{ 
+        "lesson": {{
             "translation": "One plain-English sentence translating the whole query.",
             "step_explanations": ["One short explanation per clause, in the SAME order and count as the clauses above."],
             "concepts": ["#aggregation", "#GROUP_BY"],
@@ -70,7 +70,57 @@ EXPLANATION_PROMPT = PromptTemplate.from_template(
 
     Rules: use only columns and tables from the schema. Give 2-3 modify_ideas and 2-4 concepts.
     Keep every text short and beginner-friendly."""
-) 
+)
+
+# Turns a follow-up like "now only for setosa" into a complete question
+REWRITE_PROMPT = PromptTemplate.from_template(
+    """Rewrite the user's new question as a single standalone question, using the
+    previous conversation only if the new question depends on it (for example
+    "now only for setosa" or "sort that by price").
+    If the new question is already complete on its own, return it unchanged.
+
+    Previous conversation:
+    {history_text}
+
+    New question: {question}
+
+    Return ONLY the standalone question, with no quotes or commentary."""
+)
+
+# Multiple-choice quiz about the dataset and the query that was just run
+QUIZ_PROMPT = PromptTemplate.from_template(
+    """You are a friendly SQL teacher. Write {n} multiple-choice questions for a beginner
+    who just ran the query below. Every question MUST be about THIS dataset and THIS query.
+
+    Database Schema: {schema}
+    User Question: {question}
+    Generated SQL: {sql_query}
+    Result columns: {columns}
+    Sample result rows (first 5): {rows}
+    Total rows returned: {row_count}
+
+    Return ONLY valid JSON (no markdown, no commentary) in exactly this format:
+    {{
+        "questions": [
+            {{
+                "question": "...",
+                "options": ["A", "B", "C", "D"],
+                "correct_index": 0,
+                "explanation": "1-2 sentences on why the answer is right.",
+                "topic": "clause"
+            }}
+        ]
+    }}
+
+    Rules:
+    - Mix topics: at least one about what a specific clause in this SQL does ("clause"),
+      one about interpreting the actual result using real values shown above ("result"),
+      and one about how the SQL would change for a small variation of the question ("variation").
+    - Use only real table and column names from the schema and real values from the sample rows.
+    - Exactly 4 options, exactly one correct, with plausible wrong answers.
+    - Do not ask anything that needs data you were not shown.
+    - Keep everything short and beginner-friendly."""
+)
 
 
 # ---------- helpers ----------
@@ -96,6 +146,22 @@ def _extract_json(raw: str) -> dict:
     if start == -1 or end == -1:
         raise ValueError("No JSON object found in model output")
     return json.loads(cleaned[start:end + 1])
+
+
+def _standalone_question(question: str, history: Optional[list]) -> str:
+    """Resolves follow-ups using the last couple of turns. Falls back to the original question."""
+    if not history or not llm:
+        return question
+    history_text = "\n".join(
+        f"Q: {h.get('question', '')}\nSQL: {h.get('sql', '')}" for h in history[-2:]
+    )
+    try:
+        res = (REWRITE_PROMPT | llm).invoke({"history_text": history_text, "question": question})
+        rewritten = _text(res.content).strip().strip('"')
+        return rewritten if rewritten and len(rewritten) < 500 else question
+    except Exception as e:
+        print(f"Follow-up rewrite failed: {e}")
+        return question
 
 
 def _error_response(message: str, sql: str = "", attempts: int = 0) -> dict:
@@ -156,12 +222,14 @@ def build_clause_steps(sql: str) -> list:
 
     return steps
 
+
 def to_postgres(sql: str) -> Optional[str]:
     """Converts the SQLite query to PostgreSQL. Returns None if conversion fails."""
     try:
         return sqlglot.transpile(sql, read="sqlite", write="postgres")[0]
     except Exception:
-        return None 
+        return None
+
 
 def _execute_readonly(db_path: str, sql: str):
     """Runs SQL on a read-only SQLite connection and always closes it."""
@@ -250,7 +318,8 @@ def generate_teacher_content(question: str, sql_query: str, schema: str) -> dict
         ),
     }
 
-import random
+
+# ---------- quiz ----------
 
 class QuizQuestion(BaseModel):
     question: str
@@ -265,41 +334,6 @@ class QuizQuestion(BaseModel):
         if not 0 <= v <= 3:
             raise ValueError("correct_index must be 0-3")
         return v
-
-
-QUIZ_PROMPT = PromptTemplate.from_template(
-    """You are a friendly SQL teacher. Write {n} multiple-choice questions for a beginner
-    who just ran the query below. Every question MUST be about THIS dataset and THIS query.
-
-    Database Schema: {schema}
-    User Question: {question}
-    Generated SQL: {sql_query}
-    Result columns: {columns}
-    Sample result rows (first 5): {rows}
-    Total rows returned: {row_count}
-
-    Return ONLY valid JSON (no markdown, no commentary) in exactly this format:
-    {{
-        "questions": [
-            {{
-                "question": "...",
-                "options": ["A", "B", "C", "D"],
-                "correct_index": 0,
-                "explanation": "1-2 sentences on why the answer is right.",
-                "topic": "clause"
-            }}
-        ]
-    }}
-
-    Rules:
-    - Mix topics: at least one about what a specific clause in this SQL does ("clause"),
-      one about interpreting the actual result using real values shown above ("result"),
-      and one about how the SQL would change for a small variation of the question ("variation").
-    - Use only real table and column names from the schema and real values from the sample rows.
-    - Exactly 4 options, exactly one correct, with plausible wrong answers.
-    - Do not ask anything that needs data you were not shown.
-    - Keep everything short and beginner-friendly."""
-)
 
 
 def generate_quiz(question: str, sql_query: str, db_path: str, static_questions: list, n: int = 5) -> dict:
@@ -343,7 +377,7 @@ def generate_quiz(question: str, sql_query: str, db_path: str, static_questions:
         q.correct_index = q.options.index(correct_text)
         good.append(q.model_dump())
 
-    return {"source": "ai", "questions": good} if good else fallback 
+    return {"source": "ai", "questions": good} if good else fallback
 
 
 def _friendly_error(e: Exception) -> str:
@@ -352,6 +386,7 @@ def _friendly_error(e: Exception) -> str:
         return "The AI service has reached its daily limit (quota exceeded, 429). Please try again later."
     return msg
 
+
 # ---------- main pipeline ----------
 
 def run_natural_language_query(
@@ -359,18 +394,20 @@ def run_natural_language_query(
     db_path: str = DEFAULT_DB_PATH,
     dialect: str = "SQLite",  # accepted for compatibility; execution is SQLite-only for now
     max_retries: int = 2,
+    history: Optional[list] = None,   # previous [{"question", "sql"}] turns, used for follow-up questions
+    include_teaching: bool = True,    # False skips the explanation/lesson call (used by the benchmark)
 ):
     """
     Generates, validates, and executes a SQL query against a SQLite database.
     Always returns the standard QueryResponse shape (success or failure).
     """
-    
-     # Reject live database connections for query execution
+
+    # Reject live database connections for query execution
     if "://" in str(db_path):
         return _error_response(
             "Live database connections are not supported for queries yet. Please upload a file."
         )
-    
+
     last_error = None
     cleaned_sql = ""
     attempts = 0
@@ -385,7 +422,10 @@ def run_natural_language_query(
     if not llm:
         return handle_fallback_query(user_question, db_path)
 
-    chain = create_sql_query_chain(llm, db, k=100) 
+    # 3. Turn follow-ups ("now only for setosa") into complete questions
+    user_question = _standalone_question(user_question, history)
+
+    chain = create_sql_query_chain(llm, db, k=100)
 
     while attempts <= max_retries:
         try:
@@ -415,13 +455,16 @@ def run_natural_language_query(
             # Execute (read-only, connection always closed)
             rows, truncated = _execute_readonly(db_path, cleaned_sql)
 
-            # Teacher content (never raises)
-            teacher = generate_teacher_content(user_question, cleaned_sql, db.get_table_info())
+            # Teacher content (never raises). Skipped when include_teaching=False (used by the benchmark)
+            if include_teaching:
+                teacher = generate_teacher_content(user_question, cleaned_sql, db.get_table_info())
+            else:
+                teacher = {"explanation": "", "purpose": None, "suggested_queries": [], "lesson": None}
 
             return QueryResponse(
                 success=True,
                 generated_sql=cleaned_sql,
-                postgres_sql=to_postgres(cleaned_sql), 
+                postgres_sql=to_postgres(cleaned_sql),
                 data=rows,
                 results=rows,
                 explanation=teacher["explanation"],
@@ -432,7 +475,7 @@ def run_natural_language_query(
                 truncated=truncated,
                 lesson=teacher["lesson"],
             ).model_dump()
- 
+
         except SecurityException as se:
             return _error_response(str(se), sql=cleaned_sql, attempts=attempts + 1)
 
@@ -444,10 +487,10 @@ def run_natural_language_query(
                     f"Failed after {max_retries} auto-correction retries. Last error: {last_error}",
                     sql=cleaned_sql,
                     attempts=attempts,
-                ) 
+                )
 
         except Exception as e:
-            return _error_response(_friendly_error(e), sql=cleaned_sql, attempts=attempts + 1) 
+            return _error_response(_friendly_error(e), sql=cleaned_sql, attempts=attempts + 1)
 
 
 def handle_fallback_query(question: str, db_path: str) -> dict:
@@ -485,4 +528,4 @@ def handle_fallback_query(question: str, db_path: str) -> dict:
             truncated=truncated,
         ).model_dump()
     except Exception as e:
-        return _error_response(f"Fallback execution failed: {e}")  
+        return _error_response(f"Fallback execution failed: {e}")

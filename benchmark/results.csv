@@ -1,0 +1,11 @@
+id,level,question,expected_sql,generated_sql,status,attempts_needed,detail
+1,Beginner,How many customers are there?,SELECT COUNT(*) FROM customers,"SELECT COUNT(""id"") FROM customers;",correct,1,
+2,Beginner,List the names of all products.,SELECT name FROM products,"SELECT ""name"" FROM ""products"" LIMIT 100;",correct,1,
+3,Beginner,Show the names of customers who live in Delhi.,SELECT name FROM customers WHERE city = 'Delhi',"SELECT ""name"" FROM customers WHERE ""city"" = 'Delhi' LIMIT 100;",correct,1,
+4,Beginner,What is the price of the most expensive product?,SELECT MAX(price) FROM products,"SELECT MAX(""price"") FROM ""products"";",correct,1,
+5,Beginner,How many products are in the Electronics category?,SELECT COUNT(*) FROM products WHERE category = 'Electronics',,error,1,"The AI service has reached its daily limit (quota exceeded, 429). Please try again later."
+6,Beginner,Show the names of products that cost more than 100.,SELECT name FROM products WHERE price > 100,,error,1,"The AI service has reached its daily limit (quota exceeded, 429). Please try again later."
+7,Beginner,What is the average price of all products?,SELECT AVG(price) FROM products,,error,1,"The AI service has reached its daily limit (quota exceeded, 429). Please try again later."
+8,Beginner,How many orders have been placed in total?,SELECT COUNT(*) FROM orders,,error,1,"The AI service has reached its daily limit (quota exceeded, 429). Please try again later."
+9,Beginner,Which distinct cities do our customers live in?,SELECT DISTINCT city FROM customers,,error,1,"The AI service has reached its daily limit (quota exceeded, 429). Please try again later."
+10,Beginner,What is the total quantity of products ordered across all orders?,SELECT SUM(quantity) FROM orders,,error,1,"The AI service has reached its daily limit (quota exceeded, 429). Please try again later."
