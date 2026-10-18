@@ -1,6 +1,9 @@
 import os
+import re
+import time
 import json
 import random
+import hashlib
 from typing import List, Optional
 from pydantic import BaseModel, Field, field_validator
 import sqlite3
@@ -38,6 +41,11 @@ CORRECTION_PROMPT = PromptTemplate.from_template(
     Original User Question: {question}
     Failed SQL Query: {failed_sql}
     SQLite Error Message: {error_message}
+
+    Database schema:
+    {schema}
+
+    {context}
 
     Please inspect the error and regenerate a corrected SQL query that matches the actual database schema.
     Return ONLY the raw SQL query with no markdown formatting or commentary."""
@@ -148,6 +156,164 @@ def _extract_json(raw: str) -> dict:
     return json.loads(cleaned[start:end + 1])
 
 
+# ---------- data facts + query tips (help the model use real spellings, formats and patterns) ----------
+
+HINT_MAX_VALUES = 15     # list a text column's values only if it has at most this many distinct values
+HINT_MAX_COLUMNS = 80
+HINT_MAX_CHARS = 3000
+_HINT_CACHE: dict = {}
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+QUERY_TIPS = """Query-writing tips:
+- Use ONLY tables and columns that exist. Write SQLite syntax (strftime, substr, LIKE; there is no ILIKE).
+- Return only the columns the question asks for, in the order it mentions them.
+- For text filters use the exact spelling from the facts below; if a value is not listed, compare with LOWER(column) = LOWER('value').
+- Dates are stored as text: filter them with LIKE, substr or strftime, matching the format shown in the facts.
+- For "top N", "highest" or "lowest" questions use ORDER BY with LIMIT, and add a tie-breaker column.
+- For "never" or "no matching rows" questions use NOT IN or a LEFT JOIN ... IS NULL.
+- For percentages use 100.0 * part / total so the division is not rounded down."""
+
+
+def _hints_enabled() -> bool:
+    return os.getenv("NOVAQUERY_HINTS", "on").lower() != "off"
+
+
+def build_value_hints(db_path: str) -> str:
+    """Short facts about the data: exact values of small text columns and date ranges. Costs no Gemini call."""
+    try:
+        p = Path(db_path).resolve()
+        st = p.stat()
+        key = (str(p), st.st_size, st.st_mtime_ns)
+    except Exception:
+        return ""
+    if key in _HINT_CACHE:
+        return _HINT_CACHE[key]
+
+    lines = []
+    try:
+        conn = sqlite3.connect(p.as_uri() + "?mode=ro", uri=True)
+    except Exception:
+        return ""
+    try:
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")][:12]
+        columns_seen = 0
+        for table in tables:
+            qt = '"' + table.replace('"', '""') + '"'
+            for col in conn.execute(f"PRAGMA table_info({qt})").fetchall():
+                if columns_seen >= HINT_MAX_COLUMNS:
+                    break
+                name, ctype = col[1], (col[2] or "").upper()
+                if any(k in ctype for k in ("INT", "REAL", "FLOA", "DOUB", "NUM", "DEC", "BOOL")):
+                    continue  # numeric columns need no spelling hints
+                columns_seen += 1
+                qc = '"' + name.replace('"', '""') + '"'
+                try:
+                    vals = [r[0] for r in conn.execute(
+                        f"SELECT DISTINCT {qc} FROM {qt} WHERE {qc} IS NOT NULL LIMIT {HINT_MAX_VALUES + 1}")]
+                    if not vals:
+                        continue
+                    sample = str(vals[0])
+                    if _DATE_RE.match(sample):
+                        mn, mx = conn.execute(f"SELECT MIN({qc}), MAX({qc}) FROM {qt}").fetchone()
+                        lines.append(f"- {table}.{name} holds dates as text like '{sample}', from '{mn}' to '{mx}'")
+                    elif len(vals) <= HINT_MAX_VALUES:
+                        shown = ", ".join("'" + str(v)[:30].replace("'", "''") + "'" for v in vals)
+                        lines.append(f"- {table}.{name} values: {shown}")
+                except Exception:
+                    continue
+    finally:
+        conn.close()
+
+    text = ""
+    if lines:
+        text = "Facts about the data (use these exact spellings and formats):\n" + "\n".join(lines)
+        text = text[:HINT_MAX_CHARS]
+    _HINT_CACHE[key] = text
+    return text
+
+
+def _query_context(db_path: str) -> str:
+    """Tips + data facts added to every question. Empty when NOVAQUERY_HINTS=off (used for a baseline run)."""
+    if not _hints_enabled():
+        return ""
+    facts = build_value_hints(db_path)
+    return QUERY_TIPS + ("\n\n" + facts if facts else "")
+
+
+# ---------- quota handling (Gemini rate limits) ----------
+
+MAX_QUOTA_RETRIES = 2
+
+
+def _is_quota_error(e: Exception) -> bool:
+    msg = str(e)
+    return "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower() or re.search(r"\b429\b", msg) is not None
+
+
+def _is_daily_quota(e: Exception) -> bool:
+    """Daily limits do not recover within seconds, so they are never retried."""
+    return re.search(r"per\s*day|daily", str(e), re.I) is not None
+
+
+def _retry_delay(e: Exception, attempt: int) -> float:
+    """Uses the wait time Gemini asks for ("retry in 28s") when present, else 5s then 15s."""
+    m = re.search(r"retry(?: in|Delay)\W{0,6}([\d.]+)\s*s", str(e), re.I)
+    if m:
+        return min(float(m.group(1)) + 1, 30.0)
+    return [5.0, 15.0][min(attempt, 1)]
+
+
+def _with_retry(call):
+    """Runs an LLM call; retries short per-minute rate limits, never daily ones."""
+    for attempt in range(MAX_QUOTA_RETRIES + 1):
+        try:
+            return call()
+        except Exception as e:
+            if not _is_quota_error(e) or _is_daily_quota(e) or attempt == MAX_QUOTA_RETRIES:
+                raise
+            wait = _retry_delay(e, attempt)
+            print(f"Gemini rate limit hit, retrying in {wait:.0f}s (retry {attempt + 1}/{MAX_QUOTA_RETRIES})")
+            time.sleep(wait)
+
+
+# ---------- answer cache (same question on the same dataset = no Gemini call) ----------
+
+CACHE_DIR = Path(__file__).resolve().parent.parent / "query_cache"
+CACHE_VERSION = 2  # bump this when you change the prompts, so old cached answers are not reused
+
+
+def _cache_enabled() -> bool:
+    return os.getenv("NOVAQUERY_CACHE", "on").lower() != "off"
+
+
+def _cache_key(question: str, db_path: str, include_teaching: bool) -> Optional[str]:
+    """Key = question + database file identity (path, size, modified time) + options."""
+    try:
+        p = Path(db_path).resolve()
+        st = p.stat()
+        raw = json.dumps([CACHE_VERSION, str(p), st.st_size, st.st_mtime_ns,
+                          " ".join(question.lower().split()), include_teaching])
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    except Exception:
+        return None
+
+
+def _cache_get(key: str) -> Optional[dict]:
+    try:
+        return json.loads((CACHE_DIR / f"{key}.json").read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _cache_put(key: str, response: dict) -> None:
+    try:
+        CACHE_DIR.mkdir(exist_ok=True)
+        (CACHE_DIR / f"{key}.json").write_text(json.dumps(response, default=str), encoding="utf-8")
+    except Exception as e:
+        print(f"Could not write answer cache: {e}")
+
+
 def _standalone_question(question: str, history: Optional[list]) -> str:
     """Resolves follow-ups using the last couple of turns. Falls back to the original question."""
     if not history or not llm:
@@ -254,6 +420,7 @@ def generate_teacher_content(question: str, sql_query: str, schema: str) -> dict
     default_suggestions = ["Show top 5 rows", "Count total records", "Show column names"]
 
     fallback = {
+        "degraded": True,  # generic content: the caller must not cache an answer that uses it
         "explanation": f"Translated '{question}' into a SQL query for your dataset.",
         "purpose": None,
         "suggested_queries": default_suggestions,
@@ -381,10 +548,13 @@ def generate_quiz(question: str, sql_query: str, db_path: str, static_questions:
 
 
 def _friendly_error(e: Exception) -> str:
-    msg = str(e)
-    if "RESOURCE_EXHAUSTED" in msg or "quota" in msg.lower():
-        return "The AI service has reached its daily limit (quota exceeded, 429). Please try again later."
-    return msg
+    if _is_quota_error(e):
+        if _is_daily_quota(e):
+            return ("The AI service has reached its daily limit (quota exceeded, 429). It resets once a day, "
+                    "so please try again later. Questions you already asked still work from saved answers.")
+        return ("The AI service is busy right now (rate limit, quota exceeded, 429). "
+                "Please wait about a minute and try again.")
+    return str(e)
 
 
 # ---------- main pipeline ----------
@@ -396,6 +566,7 @@ def run_natural_language_query(
     max_retries: int = 2,
     history: Optional[list] = None,   # previous [{"question", "sql"}] turns, used for follow-up questions
     include_teaching: bool = True,    # False skips the explanation/lesson call (used by the benchmark)
+    use_cache: bool = True,           # False always asks Gemini (used by the benchmark)
 ):
     """
     Generates, validates, and executes a SQL query against a SQLite database.
@@ -418,12 +589,23 @@ def run_natural_language_query(
     except Exception as db_init_error:
         return _error_response(f"Failed to initialize database schema at '{db_path}': {db_init_error}")
 
-    # 2. No API key: schema-aware fallback
+    # 2. Turn follow-ups ("now only for setosa") into complete questions (no call without history)
+    user_question = _standalone_question(user_question, history)
+
+    # 3. Saved answer for this exact question on this exact dataset? Return it without calling Gemini.
+    cache_key = _cache_key(user_question, db_path, include_teaching) if (use_cache and _cache_enabled()) else None
+    if cache_key:
+        cached = _cache_get(cache_key)
+        if cached:
+            return cached
+
+    # 4. No API key: schema-aware fallback
     if not llm:
         return handle_fallback_query(user_question, db_path)
 
-    # 3. Turn follow-ups ("now only for setosa") into complete questions
-    user_question = _standalone_question(user_question, history)
+    # 5. Tips and real data facts (exact spellings, date formats) so the model writes better SQL
+    extra_context = _query_context(db_path)
+    generation_question = f"{user_question}\n\n{extra_context}" if extra_context else user_question
 
     chain = create_sql_query_chain(llm, db, k=100)
 
@@ -431,14 +613,16 @@ def run_natural_language_query(
         try:
             # Generate SQL
             if attempts == 0:
-                generated_sql = chain.invoke({"question": user_question})
+                generated_sql = _with_retry(lambda: chain.invoke({"question": generation_question}))
             else:
                 correction_chain = CORRECTION_PROMPT | llm
-                response = correction_chain.invoke({
+                response = _with_retry(lambda: correction_chain.invoke({
                     "question": user_question,
                     "failed_sql": cleaned_sql,
                     "error_message": last_error,
-                })
+                    "schema": db.get_table_info(),
+                    "context": extra_context,
+                }))
                 generated_sql = _text(response.content)
 
             cleaned_sql = (
@@ -461,7 +645,7 @@ def run_natural_language_query(
             else:
                 teacher = {"explanation": "", "purpose": None, "suggested_queries": [], "lesson": None}
 
-            return QueryResponse(
+            response_dict = QueryResponse(
                 success=True,
                 generated_sql=cleaned_sql,
                 postgres_sql=to_postgres(cleaned_sql),
@@ -475,6 +659,10 @@ def run_natural_language_query(
                 truncated=truncated,
                 lesson=teacher["lesson"],
             ).model_dump()
+
+            if cache_key and not teacher.get("degraded"):
+                _cache_put(cache_key, response_dict)
+            return response_dict
 
         except SecurityException as se:
             return _error_response(str(se), sql=cleaned_sql, attempts=attempts + 1)
@@ -528,4 +716,4 @@ def handle_fallback_query(question: str, db_path: str) -> dict:
             truncated=truncated,
         ).model_dump()
     except Exception as e:
-        return _error_response(f"Fallback execution failed: {e}")
+        return _error_response(f"Fallback execution failed: {e}") 

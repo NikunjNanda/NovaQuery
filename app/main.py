@@ -145,7 +145,7 @@ async def connect_uri(payload: ConnectionRequest):
             engine.dispose() 
 
 @app.post("/api/query")
-async def process_query(payload: QueryRequest):
+def process_query(payload: QueryRequest):
     # Accept either 'question' or 'query' field from request body
     user_question = payload.question or payload.query
     if not user_question or not user_question.strip():

@@ -9,3 +9,5 @@ uploads/
 *.db 
 briefing_cache/
 debug_briefing.py 
+query_cache/
+.pytest_cache/
