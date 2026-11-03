@@ -6,7 +6,9 @@
   --bg-page: #070a13;
   --bg-card: #0d1322;
   --border-subtle: #1a243a;
-  --accent-cyan: #06b6d4;
+  --accent-primary: #8b5cf6;
+  --accent-lavender: #d0bcff;
+  --accent-cyan: #54d8e7;
 }
 
 body {

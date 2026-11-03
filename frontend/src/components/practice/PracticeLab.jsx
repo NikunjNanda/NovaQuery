@@ -183,7 +183,7 @@ export default function PracticeLab() {
       <div className="flex flex-col gap-6 animate-fadeIn">
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#1a243a]">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-cyan-950/60 border border-cyan-800/40 flex items-center justify-center text-cyan-400 shadow-md">
+            <div className="w-10 h-10 rounded-xl bg-violet-950/60 border border-violet-800/40 flex items-center justify-center text-violet-400 shadow-md">
               <GraduationCap className="w-5 h-5" />
             </div>
             <div>
@@ -208,7 +208,7 @@ export default function PracticeLab() {
               setSelectedDifficulty('all');
               setSelectedCategory('all');
             }}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold text-xs transition shadow-md shadow-violet-950 active:scale-95"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Reset Filters</span>
@@ -223,7 +223,7 @@ export default function PracticeLab() {
   // ==========================================
   if (isCompleted) {
     let performanceBadge = 'Solid Foundation 🚀';
-    let performanceColor = 'text-cyan-400 border-cyan-800/50 bg-cyan-950/40';
+    let performanceColor = 'text-violet-400 border-violet-800/50 bg-violet-950/40';
     if (scorePercentage === 100) {
       performanceBadge = 'Perfect Score! 🌟 SQL Expert';
       performanceColor = 'text-emerald-300 border-emerald-700/50 bg-emerald-950/40';
@@ -239,9 +239,9 @@ export default function PracticeLab() {
       <div className="flex flex-col gap-6 animate-fadeIn max-w-4xl mx-auto w-full">
         {/* Results Banner */}
         <div className="bg-[#0d1322] border border-[#1a243a] rounded-2xl p-6 sm:p-8 flex flex-col items-center text-center gap-5 shadow-xl relative overflow-hidden">
-          <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-96 bg-cyan-500/10 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-96 h-96 bg-violet-500/10 rounded-full blur-3xl pointer-events-none" />
 
-          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-cyan-500/20 to-indigo-500/20 border border-cyan-500/30 flex items-center justify-center text-cyan-300 shadow-lg">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-violet-500/20 to-indigo-500/20 border border-violet-500/30 flex items-center justify-center text-violet-300 shadow-lg">
             <Trophy className="w-8 h-8" />
           </div>
 
@@ -253,9 +253,9 @@ export default function PracticeLab() {
               Quiz Completed!
             </h2>
             <p className="text-xs sm:text-sm text-slate-400 max-w-md">
-              You scored <span className="text-cyan-400 font-semibold">{correctCount}</span> out of{' '}
+              You scored <span className="text-violet-400 font-semibold">{correctCount}</span> out of{' '}
               <span className="text-slate-200 font-semibold">{totalQuestions}</span> questions correctly (
-              <span className="text-cyan-400 font-mono font-semibold">{scorePercentage}%</span>).
+              <span className="text-violet-400 font-mono font-semibold">{scorePercentage}%</span>).
             </p>
           </div>
 
@@ -269,7 +269,7 @@ export default function PracticeLab() {
             </div>
             <div className="bg-[#070a13] border border-[#1a243a] rounded-xl p-3 flex flex-col items-center">
               <span className="text-slate-500 text-[11px] font-mono uppercase">Accuracy</span>
-              <span className="text-lg sm:text-xl font-bold text-cyan-400 font-mono">
+              <span className="text-lg sm:text-xl font-bold text-violet-400 font-mono">
                 {scorePercentage}%
               </span>
             </div>
@@ -285,7 +285,7 @@ export default function PracticeLab() {
           <div className="flex items-center gap-3 pt-2">
             <button
               onClick={handleRestart}
-              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs sm:text-sm transition shadow-md shadow-cyan-950 active:scale-95"
+              className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold text-xs sm:text-sm transition shadow-md shadow-violet-950 active:scale-95"
             >
               <RotateCcw className="w-4 h-4" />
               <span>Restart Quiz</span>
@@ -297,7 +297,7 @@ export default function PracticeLab() {
               }}
               className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-slate-200 font-medium text-xs sm:text-sm transition active:scale-95"
             >
-              <Sparkles className="w-4 h-4 text-cyan-400" />
+              <Sparkles className="w-4 h-4 text-violet-400" />
               <span>Review Answers</span>
             </button>
           </div>
@@ -306,7 +306,7 @@ export default function PracticeLab() {
         {/* Breakdown by Difficulty */}
         <div className="bg-[#0d1322] border border-[#1a243a] rounded-2xl p-5 sm:p-6 flex flex-col gap-4">
           <div className="flex items-center gap-2 pb-2 border-b border-[#1a243a]">
-            <BarChart3 className="w-4 h-4 text-cyan-400" />
+            <BarChart3 className="w-4 h-4 text-violet-400" />
             <h3 className="text-xs sm:text-sm font-semibold text-slate-200">
               Performance by Difficulty Level
             </h3>
@@ -326,7 +326,7 @@ export default function PracticeLab() {
                     <div className="flex items-center gap-1.5">
                       <span
                         className="w-2 h-2 rounded-full"
-                        style={{ backgroundColor: diffConfig?.dot || '#06b6d4' }}
+                        style={{ backgroundColor: diffConfig?.dot || '#8b5cf6' }}
                       />
                       <span className="text-xs font-semibold capitalize text-slate-200">
                         {diffKey}
@@ -338,7 +338,7 @@ export default function PracticeLab() {
                   </div>
                   <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-cyan-400 transition-all duration-500 rounded-full"
+                      className="h-full bg-violet-500 transition-all duration-500 rounded-full"
                       style={{ width: `${diffPct}%` }}
                     />
                   </div>
@@ -351,7 +351,7 @@ export default function PracticeLab() {
         {/* Breakdown by Category */}
         <div className="bg-[#0d1322] border border-[#1a243a] rounded-2xl p-5 sm:p-6 flex flex-col gap-4">
           <div className="flex items-center gap-2 pb-2 border-b border-[#1a243a]">
-            <GraduationCap className="w-4 h-4 text-cyan-400" />
+            <GraduationCap className="w-4 h-4 text-violet-400" />
             <h3 className="text-xs sm:text-sm font-semibold text-slate-200">
               Performance by Topic Category
             </h3>
@@ -377,7 +377,7 @@ export default function PracticeLab() {
                         catPct === 100
                           ? 'bg-emerald-400'
                           : catPct >= 50
-                          ? 'bg-cyan-400'
+                          ? 'bg-violet-400'
                           : 'bg-rose-400'
                       }`}
                       style={{ width: `${catPct}%` }}
@@ -403,7 +403,7 @@ export default function PracticeLab() {
       <header className="flex flex-col gap-4 pb-4 border-b border-[#1a243a]">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-cyan-950/60 border border-cyan-800/40 flex items-center justify-center text-cyan-400 shadow-md">
+            <div className="w-10 h-10 rounded-xl bg-violet-950/60 border border-violet-800/40 flex items-center justify-center text-violet-400 shadow-md">
               <GraduationCap className="w-5 h-5" />
             </div>
             <div>
@@ -411,7 +411,7 @@ export default function PracticeLab() {
                 <h1 className="text-base sm:text-lg font-bold text-slate-100">
                   SQL Practice Lab
                 </h1>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-950/50 text-cyan-300 border border-cyan-800/40">
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-violet-950/50 text-violet-300 border border-violet-800/40">
                   15 Questions
                 </span>
               </div>
@@ -447,7 +447,7 @@ export default function PracticeLab() {
                 onClick={() => handleDifficultyChange(diff)}
                 className={`px-2.5 py-1 rounded-lg text-xs font-medium transition capitalize ${
                   isActive
-                    ? 'bg-cyan-500 text-slate-950 font-semibold shadow-sm'
+                    ? 'bg-violet-600 text-white font-semibold shadow-sm'
                     : 'bg-slate-900/80 text-slate-400 hover:text-slate-200 border border-slate-800/80'
                 }`}
               >
@@ -467,7 +467,7 @@ export default function PracticeLab() {
               id="category-filter"
               value={selectedCategory}
               onChange={(e) => handleCategoryChange(e.target.value)}
-              className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-cyan-500/50"
+              className="bg-slate-900 border border-slate-800 text-slate-300 text-xs rounded-lg px-2.5 py-1 focus:outline-none focus:border-violet-500/50"
             >
               <option value="all">All Topics ({PRACTICE_QUESTIONS.length})</option>
               {allCategories.map((cat) => (
@@ -484,7 +484,7 @@ export default function PracticeLab() {
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-xs font-mono">
           <div className="flex items-center gap-2">
-            <span className="text-cyan-400 font-semibold">
+            <span className="text-violet-400 font-semibold">
               Question {currentIndex + 1}
             </span>
             <span className="text-slate-600">/</span>
@@ -498,7 +498,7 @@ export default function PracticeLab() {
               <span className="text-slate-600"> / </span>
               <span>{answeredCount} answered</span>
             </span>
-            <span className="text-cyan-400/90 font-semibold">
+            <span className="text-violet-300 font-semibold">
               {progressPercent}%
             </span>
           </div>
@@ -507,7 +507,7 @@ export default function PracticeLab() {
         {/* Visual Progress Bar */}
         <div className="w-full h-2 bg-slate-900 border border-slate-800/80 rounded-full overflow-hidden">
           <div
-            className="h-full bg-gradient-to-r from-cyan-500 to-cyan-400 transition-all duration-300 rounded-full shadow-sm shadow-cyan-500/30"
+            className="h-full bg-gradient-to-r from-violet-600 to-indigo-500 transition-all duration-300 rounded-full shadow-sm shadow-violet-500/30"
             style={{ width: `${progressPercent}%` }}
           />
         </div>
@@ -522,7 +522,7 @@ export default function PracticeLab() {
               <Chip
                 label={currentQuestion.category}
                 variant="tag"
-                className="text-cyan-300 border-cyan-800/40 bg-cyan-950/30"
+                className="text-violet-300 border-violet-800/40 bg-violet-950/30"
               />
               <Chip
                 label={THEME.difficulty[currentQuestion.difficulty]?.label || currentQuestion.difficulty}
@@ -576,7 +576,7 @@ export default function PracticeLab() {
               const isSelected = currentAnswer?.selectedIndex === optIdx;
               const isCorrectOption = optIdx === currentQuestion.correctIndex;
 
-              let buttonStyle = 'bg-[#090e1a] border-[#1a243a] text-slate-200 hover:border-cyan-500/50 hover:bg-[#0f172a]';
+              let buttonStyle = 'bg-[#090e1a] border-[#1a243a] text-slate-200 hover:border-violet-500/50 hover:bg-[#0f172a]';
               let badgeStyle = 'bg-slate-800 text-slate-300 border-slate-700';
 
               if (isAnswered) {
@@ -672,7 +672,7 @@ export default function PracticeLab() {
               {/* Detailed Explanation */}
               <div className="bg-[#090e1a] border border-[#1a243a] rounded-xl p-4 flex flex-col gap-2">
                 <div className="flex items-center gap-2 text-xs font-semibold text-slate-200">
-                  <HelpCircle className="w-4 h-4 text-cyan-400" />
+                  <HelpCircle className="w-4 h-4 text-violet-400" />
                   <span>Explanation</span>
                 </div>
                 <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
@@ -705,8 +705,8 @@ export default function PracticeLab() {
                 !isAnswered
                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/40 shadow-none'
                   : currentIndex === totalQuestions - 1
-                  ? 'bg-gradient-to-r from-cyan-500 to-indigo-500 text-slate-950 hover:brightness-110 shadow-cyan-950'
-                  : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-cyan-950'
+                  ? 'bg-gradient-to-r from-violet-600 to-indigo-600 text-white hover:brightness-110 shadow-violet-950'
+                  : 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-violet-950'
               }`}
             >
               <span>

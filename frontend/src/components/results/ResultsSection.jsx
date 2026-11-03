@@ -51,6 +51,8 @@ export default function ResultsSection({
   result = null,
   responseTime = null,
   onRetry,
+  sqlDialect = 'sqlite',
+  onDialectChange,
 }) {
   const [activeTab, setActiveTab] = useState('results'); // 'results' | 'chart' | 'sql'
 
@@ -59,7 +61,7 @@ export default function ResultsSection({
     return (
       <div className="bg-[#0d1322] border border-[#1a243a] rounded-2xl p-5 flex flex-col gap-4 shadow-xl animate-fadeIn">
         <div className="flex items-center justify-between border-b border-[#1a243a] pb-3">
-          <div className="flex items-center gap-2 text-cyan-400 text-xs font-mono">
+          <div className="flex items-center gap-2 text-violet-400 text-xs font-mono">
             <RefreshCw className="w-3.5 h-3.5 animate-spin" />
             <span>Executing SQL query against dataset...</span>
           </div>
@@ -111,7 +113,7 @@ export default function ResultsSection({
           {onRetry && (
             <button
               onClick={onRetry}
-              className="text-cyan-400 hover:text-cyan-300 hover:underline"
+              className="text-violet-400 hover:text-violet-300 hover:underline"
             >
               Try again
             </button>
@@ -150,7 +152,7 @@ export default function ResultsSection({
             onClick={() => setActiveTab('results')}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition ${
               activeTab === 'results'
-                ? 'bg-slate-800 text-cyan-400 font-semibold shadow-sm'
+                ? 'bg-slate-800 text-violet-300 font-semibold shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -162,7 +164,7 @@ export default function ResultsSection({
             onClick={() => setActiveTab('chart')}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition ${
               activeTab === 'chart'
-                ? 'bg-slate-800 text-cyan-400 font-semibold shadow-sm'
+                ? 'bg-slate-800 text-violet-300 font-semibold shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -174,7 +176,7 @@ export default function ResultsSection({
             onClick={() => setActiveTab('sql')}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-md transition ${
               activeTab === 'sql'
-                ? 'bg-slate-800 text-cyan-400 font-semibold shadow-sm'
+                ? 'bg-slate-800 text-violet-300 font-semibold shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -202,7 +204,7 @@ export default function ResultsSection({
           <button
             onClick={() => exportToCsv(data)}
             disabled={rowCount === 0}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#05080f] hover:bg-slate-800 border border-[#151f33] text-slate-300 hover:text-cyan-300 text-xs font-mono transition disabled:opacity-40"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-[#05080f] hover:bg-slate-800 border border-[#151f33] text-slate-300 hover:text-violet-300 text-xs font-mono transition disabled:opacity-40"
           >
             <Download className="w-3.5 h-3.5" />
             <span>CSV</span>
@@ -242,32 +244,32 @@ export default function ResultsSection({
           )}
 
           {/* "About this query" card directly above the generated SQL block */}
-          {(explanation || purpose) && (
+          {Boolean(explanation?.trim() || purpose?.trim()) && (
             <div className="p-4 rounded-xl bg-[#090e1a] border border-[#1a243a] flex flex-col gap-2.5">
-              <div className="flex items-center gap-2 text-cyan-400 font-mono text-xs font-semibold">
+              <div className="flex items-center gap-2 text-violet-400 font-mono text-xs font-semibold">
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>About this query</span>
               </div>
 
               {/* What it does */}
-              {explanation && (
+              {explanation?.trim() && (
                 <div className="flex flex-col gap-0.5">
                   <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">
                     What it does:
                   </span>
-                  <p className="text-xs text-slate-300 leading-relaxed font-sans">
+                  <p className="text-xs text-slate-300 leading-relaxed font-sans whitespace-pre-line">
                     {explanation}
                   </p>
                 </div>
               )}
 
               {/* Use (optional purpose line) */}
-              {purpose && (
+              {purpose?.trim() && (
                 <div className="flex flex-col gap-0.5 pt-1 border-t border-[#151f33]">
                   <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">
                     Use:
                   </span>
-                  <p className="text-xs text-slate-400 leading-relaxed font-sans">
+                  <p className="text-xs text-slate-400 leading-relaxed font-sans whitespace-pre-line">
                     {purpose}
                   </p>
                 </div>
@@ -276,7 +278,14 @@ export default function ResultsSection({
           )}
 
           {/* Generated SQL block */}
-          {sql && <SqlBlock sql={sql} postgresSql={postgresSql} dialect="SQLite" />}
+          {sql && (
+            <SqlBlock
+              sql={sql}
+              postgresSql={postgresSql}
+              dialect={sqlDialect}
+              onDialectChange={onDialectChange}
+            />
+          )}
         </div>
       )}
 
@@ -290,14 +299,19 @@ export default function ResultsSection({
       {/* Tab Content: View 3 - Raw SQL */}
       {activeTab === 'sql' && (
         <div className="flex flex-col gap-4">
-          {(explanation || purpose) && (
-            <div className="p-3.5 rounded-xl bg-[#090e1a] border border-[#1a243a] text-xs text-slate-300">
-              <span className="font-semibold text-cyan-400">Explanation: </span>
+          {Boolean(explanation?.trim() || purpose?.trim()) && (
+            <div className="p-3.5 rounded-xl bg-[#090e1a] border border-[#1a243a] text-xs text-slate-300 whitespace-pre-line">
+              <span className="font-semibold text-violet-400">Explanation: </span>
               <span>{explanation}</span>
             </div>
           )}
           {sql ? (
-            <SqlBlock sql={sql} postgresSql={postgresSql} dialect="SQLite" />
+            <SqlBlock
+              sql={sql}
+              postgresSql={postgresSql}
+              dialect={sqlDialect}
+              onDialectChange={onDialectChange}
+            />
           ) : (
             <div className="text-slate-500 text-xs font-mono p-4">No SQL generated yet.</div>
           )}

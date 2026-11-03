@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNovaQuery } from './hooks/useNovaQuery';
 import { useDatasetBriefing } from './hooks/useDatasetBriefing';
 import Shell from './components/layout/Shell';
@@ -11,9 +11,10 @@ import HowQueryWorksPanel from './components/lesson/HowQueryWorksPanel';
 import DatasetBriefingCard from './components/workspace/DatasetBriefingCard';
 import StarterQueriesSection from './components/workspace/StarterQueriesSection';
 import PracticeLab from './components/practice/PracticeLab';
+import LandingPage from './components/landing/LandingPage';
 import { Layers, Upload, RefreshCw } from 'lucide-react';
 
-export default function App() {
+function WorkspaceApp({ initialQuestion, onBackToLanding }) {
   const {
     activeTab,
     setActiveTab,
@@ -31,6 +32,8 @@ export default function App() {
     queryError,
     queryResult,
     responseTime,
+    sqlDialect,
+    setSqlDialect,
     runQuery,
     history,
     activeHistoryId,
@@ -52,6 +55,13 @@ export default function App() {
     briefingError,
     reloadBriefing,
   } = useDatasetBriefing(dbPath, Boolean(profile));
+
+  // Populate initial question if provided from landing page
+  useEffect(() => {
+    if (initialQuestion) {
+      setQueryText(initialQuestion);
+    }
+  }, [initialQuestion, setQueryText]);
 
   // Starter query card clicked: only fills the query input box without auto-running
   const handleSelectStarterQuery = (questionText) => {
@@ -95,7 +105,7 @@ export default function App() {
           ) : !profile ? (
             /* Empty State when no dataset active or loading failed */
             <div className="flex flex-col items-center justify-center p-12 sm:p-16 bg-[#0d1322] border border-[#1a243a] rounded-2xl text-center gap-4 my-6 animate-fadeIn">
-              <div className="w-14 h-14 rounded-2xl bg-cyan-950/40 border border-cyan-800/40 flex items-center justify-center text-cyan-400">
+              <div className="w-14 h-14 rounded-2xl bg-violet-950/40 border border-violet-800/40 flex items-center justify-center text-violet-400">
                 <Upload className="w-7 h-7" />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -108,7 +118,7 @@ export default function App() {
               </div>
               <button
                 onClick={() => setIsUploadOpen(true)}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition shadow-md shadow-cyan-950 active:scale-95 mt-1"
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold text-xs transition shadow-md shadow-violet-950 active:scale-95 mt-1"
               >
                 <Upload className="w-4 h-4" />
                 <span>Upload Dataset</span>
@@ -160,6 +170,8 @@ export default function App() {
                       result={queryResult}
                       responseTime={responseTime}
                       onRetry={() => runQuery()}
+                      sqlDialect={sqlDialect}
+                      onDialectChange={setSqlDialect}
                     />
                   </div>
 
@@ -168,7 +180,9 @@ export default function App() {
                     <HowQueryWorksPanel
                       loading={loadingQuery}
                       error={queryError}
+                      result={queryResult}
                       lesson={queryResult?.lesson || null}
+                      sqlDialect={sqlDialect}
                       fallbackExplanation={queryResult?.explanation || ''}
                       onSelectModifyIdea={(questionText) => {
                         setQueryText(questionText);
@@ -185,7 +199,7 @@ export default function App() {
                   <span>Couldn't load the dataset briefing</span>
                   <button
                     onClick={() => reloadBriefing(true)}
-                    className="text-cyan-400 hover:text-cyan-300 hover:underline text-[11px]"
+                    className="text-violet-400 hover:text-violet-300 hover:underline text-[11px]"
                   >
                     Retry
                   </button>
@@ -247,11 +261,11 @@ export default function App() {
             </div>
           )}
 
-          <label className={`border-2 border-dashed border-[#1a243a] hover:border-cyan-500/50 rounded-xl p-8 flex flex-col items-center justify-center gap-2 transition bg-[#05080f]/50 ${isUploading ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}>
+          <label className={`border-2 border-dashed border-[#1a243a] hover:border-violet-500/50 rounded-xl p-8 flex flex-col items-center justify-center gap-2 transition bg-[#05080f]/50 ${isUploading ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}>
             {isUploading ? (
-              <RefreshCw className="w-8 h-8 text-cyan-400 animate-spin" />
+              <RefreshCw className="w-8 h-8 text-violet-400 animate-spin" />
             ) : (
-              <Upload className="w-8 h-8 text-cyan-400" />
+              <Upload className="w-8 h-8 text-violet-400" />
             )}
             <span className="text-xs font-semibold text-slate-200">
               {isUploading ? 'Uploading and processing file...' : 'Click to browse or drop file here'}
@@ -289,13 +303,13 @@ export default function App() {
           <div className="flex flex-col gap-2 font-mono">
             <div className="flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800">
               <span className="text-slate-400">Run Query</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-400 text-[11px]">
+              <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-violet-400 text-[11px]">
                 Ctrl + Enter
               </kbd>
             </div>
             <div className="flex items-center justify-between p-2 rounded bg-slate-900 border border-slate-800">
               <span className="text-slate-400">Upload Data</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-400 text-[11px]">
+              <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-violet-400 text-[11px]">
                 Ctrl + 0
               </kbd>
             </div>
@@ -303,5 +317,61 @@ export default function App() {
         </div>
       </Modal>
     </Shell>
+  );
+}
+
+export default function App() {
+  const [currentView, setCurrentView] = useState(() => {
+    if (typeof window !== 'undefined' && window.location.hash === '#workspace') {
+      return 'workspace';
+    }
+    return 'landing';
+  });
+  const [prefilledQuestion, setPrefilledQuestion] = useState('');
+
+  // Keep browser Back/Forward navigation synchronized via hash
+  useEffect(() => {
+    const handleHashChange = () => {
+      if (window.location.hash === '#workspace') {
+        setCurrentView('workspace');
+      } else if (!window.location.hash || window.location.hash === '#overview' || window.location.hash === '') {
+        setCurrentView('landing');
+      }
+    };
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const handleEnterWorkspace = () => {
+    setPrefilledQuestion('');
+    setCurrentView('workspace');
+    window.location.hash = 'workspace';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSelectQuestion = (questionText) => {
+    setPrefilledQuestion(questionText);
+    setCurrentView('workspace');
+    window.location.hash = 'workspace';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  if (currentView === 'landing') {
+    return (
+      <LandingPage
+        onEnterWorkspace={handleEnterWorkspace}
+        onSelectQuestion={handleSelectQuestion}
+      />
+    );
+  }
+
+  return (
+    <WorkspaceApp
+      initialQuestion={prefilledQuestion}
+      onBackToLanding={() => {
+        window.location.hash = '';
+        setCurrentView('landing');
+      }}
+    />
   );
 }

@@ -29,7 +29,7 @@ export default function Navbar({
       {/* Left: Brand & Active Dataset Badge */}
       <div className="flex items-center gap-4 lg:gap-6">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-cyan-950/80 border border-cyan-700/50 flex items-center justify-center text-cyan-400 shadow-sm shadow-cyan-950/50">
+          <div className="w-8 h-8 rounded-lg bg-violet-950/60 border border-violet-700/50 flex items-center justify-center text-violet-400 shadow-sm shadow-violet-950/50">
             <Database className="w-4 h-4" />
           </div>
           <div className="flex items-center gap-2">
@@ -66,13 +66,13 @@ export default function Navbar({
               onClick={() => onSelectTab(tab.id)}
               className={`relative h-14 px-3 sm:px-4 text-xs sm:text-sm font-medium transition-colors flex items-center justify-center ${
                 isActive
-                  ? 'text-cyan-400 font-semibold'
+                  ? 'text-violet-300 font-semibold'
                   : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900/40'
               }`}
             >
               {tab.label}
               {isActive && (
-                <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-cyan-400 rounded-t-full shadow-sm shadow-cyan-400/50" />
+                <span className="absolute bottom-0 left-2 right-2 h-0.5 bg-violet-400 rounded-t-full shadow-sm shadow-violet-400/50" />
               )}
             </button>
           );
@@ -83,7 +83,7 @@ export default function Navbar({
       <div className="flex items-center gap-2 sm:gap-3">
         <button
           onClick={onOpenUpload}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-semibold text-xs transition shadow-sm shadow-cyan-950 active:scale-95"
+          className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold text-xs transition shadow-sm shadow-violet-900/40 active:scale-95"
         >
           <Upload className="w-3.5 h-3.5" />
           <span>Upload data</span>

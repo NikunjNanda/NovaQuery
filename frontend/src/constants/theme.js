@@ -14,13 +14,18 @@ export const THEME = {
     insetBorder: '#151f33',  // Inset input border
   },
 
-  // Brand and accent colors
+  // Brand and accent colors - Unified to Landing Page Violet Visual Identity
   accent: {
-    cyan: '#06b6d4',         // Primary action, tabs, active indicators
+    primary: '#8b5cf6',       // Electric Violet primary
+    primaryHover: '#7c3aed',  // Bright Violet hover
+    primaryMuted: 'rgba(139, 92, 246, 0.15)',
+    primaryBorder: 'rgba(139, 92, 246, 0.35)',
+    glow: 'rgba(139, 92, 246, 0.25)',
+    lavender: '#d0bcff',      // Lavender highlight
+    cyan: '#54d8e7',          // Controlled cyan secondary accent
     cyanHover: '#22d3ee',
-    cyanMuted: 'rgba(6, 182, 212, 0.12)',
-    cyanBorder: 'rgba(6, 182, 212, 0.3)',
-    glow: 'rgba(6, 182, 212, 0.15)',
+    cyanMuted: 'rgba(84, 216, 231, 0.12)',
+    cyanBorder: 'rgba(84, 216, 231, 0.3)',
   },
 
   // Text hierarchy
@@ -28,7 +33,7 @@ export const THEME = {
     primary: '#f1f5f9',      // Slate-100 for titles and key content
     secondary: '#94a3b8',    // Slate-400 for descriptions and labels
     muted: '#64748b',        // Slate-500 for placeholders and subtle meta
-    accent: '#22d3ee',       // Cyan-400 for highlights
+    accent: '#d0bcff',       // Lavender for highlights
   },
 
   // Curriculum difficulty color tokens
@@ -138,8 +143,8 @@ export const THEME = {
 
   // Chart palette for Recharts
   chart: {
-    primary: '#06b6d4',      // Cyan-500
-    secondary: '#6366f1',    // Indigo-500
+    primary: '#8b5cf6',      // Violet-500 primary series
+    secondary: '#54d8e7',    // Controlled Cyan secondary series
     tertiary: '#10b981',     // Emerald-500
     accent: '#f59e0b',       // Amber-500
     warning: '#f43f5e',      // Rose-500

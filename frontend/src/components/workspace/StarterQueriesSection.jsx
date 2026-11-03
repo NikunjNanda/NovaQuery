@@ -78,7 +78,7 @@ export default function StarterQueriesSection({
       {/* Section Header */}
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-xl bg-cyan-950/70 border border-cyan-800/50 flex items-center justify-center text-cyan-400">
+          <div className="w-8 h-8 rounded-xl bg-violet-950/70 border border-violet-800/50 flex items-center justify-center text-violet-400">
             <GraduationCap className="w-4 h-4" />
           </div>
           <div>
@@ -129,7 +129,7 @@ export default function StarterQueriesSection({
                   <button
                     key={item.id || item.number || item.title}
                     onClick={() => onSelectQuery(item.question)}
-                    className="w-full text-left bg-[#0d1322] hover:bg-[#111a2e] border border-[#1a243a] hover:border-cyan-500/40 rounded-xl p-3.5 transition flex flex-col gap-2.5 group shadow-md"
+                    className="w-full text-left bg-[#0d1322] hover:bg-[#111a2e] border border-[#1a243a] hover:border-violet-500/40 rounded-xl p-3.5 transition flex flex-col gap-2.5 group shadow-md"
                   >
                     {/* Top metadata line: Number • Category -> Arrow */}
                     <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 w-full">
@@ -138,11 +138,11 @@ export default function StarterQueriesSection({
                         <span>•</span>
                         <span className="text-slate-400">{item.category}</span>
                       </div>
-                      <ArrowRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-cyan-400 group-hover:translate-x-0.5 transition-all" />
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-600 group-hover:text-violet-400 group-hover:translate-x-0.5 transition-all" />
                     </div>
 
                     {/* Card Title */}
-                    <h4 className="text-xs sm:text-sm font-semibold text-slate-200 group-hover:text-cyan-300 transition-colors leading-snug">
+                    <h4 className="text-xs sm:text-sm font-semibold text-slate-200 group-hover:text-violet-300 transition-colors leading-snug">
                       {item.title}
                     </h4>
 

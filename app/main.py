@@ -12,7 +12,7 @@ from app.schemas import BriefingResponse
 import pandas as pd  
 import sqlite3  
 
-from app.query_engine import run_natural_language_query, DEFAULT_DB_PATH , generate_quiz 
+from app.query_engine import run_natural_language_query, DEFAULT_DB_PATH , generate_quiz, run_user_sql 
 
 app = FastAPI(title="NovaQuery AI Engine") 
 
@@ -96,6 +96,10 @@ class QueryRequest(BaseModel):
     db_path: Optional[str] = None
     dialect: Optional[str] = "SQLite"
 
+class RunSqlRequest(BaseModel):
+    sql: str
+    db_path: Optional[str] = None
+
 class ConnectionRequest(BaseModel):
     connection_string: str 
 
@@ -162,6 +166,19 @@ def process_query(payload: QueryRequest):
         return response  
     except Exception as e:
         print(f"Error processing query: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
+
+@app.post("/api/run-sql")
+def run_sql(payload: RunSqlRequest):
+    if not payload.sql or not payload.sql.strip():
+        raise HTTPException(status_code=400, detail="SQL query cannot be empty")
+
+    target_db = resolve_target(payload.db_path)
+
+    try:
+        return run_user_sql(sql=payload.sql, db_path=target_db)
+    except Exception as e:
+        print(f"Error executing user SQL: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
 
 @app.post("/api/quiz")

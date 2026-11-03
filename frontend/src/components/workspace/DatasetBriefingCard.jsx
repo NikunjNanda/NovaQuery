@@ -39,7 +39,7 @@ export default function DatasetBriefingCard({
     <div className="bg-[#0d1322] border border-[#1a243a] rounded-2xl p-5 flex flex-col gap-4 shadow-xl min-w-0 overflow-hidden">
       {/* 1.a Title */}
       <div className="flex items-center gap-2.5">
-        <div className="w-7 h-7 rounded-lg bg-cyan-950/70 border border-cyan-800/50 flex items-center justify-center text-cyan-400 shrink-0">
+        <div className="w-7 h-7 rounded-lg bg-violet-950/70 border border-violet-800/50 flex items-center justify-center text-violet-400 shrink-0">
           <BookOpen className="w-4 h-4" />
         </div>
         <h3 className="text-sm sm:text-base font-semibold text-slate-100">

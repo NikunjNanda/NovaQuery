@@ -165,7 +165,7 @@ export default function Sidebar({
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search tables, columns..."
-              className="w-full bg-[#05080f] border border-[#151f33] focus:border-cyan-500/70 rounded-md pl-8 pr-2.5 py-1.5 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none transition"
+              className="w-full bg-[#05080f] border border-[#151f33] focus:border-violet-500/70 rounded-md pl-8 pr-2.5 py-1.5 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none transition"
             />
           </div>
         </div>
@@ -191,8 +191,8 @@ export default function Sidebar({
                       ) : (
                         <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
                       )}
-                      <TableIcon className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
-                      <span className="text-xs font-mono font-medium text-slate-200 truncate group-hover:text-cyan-300">
+                      <TableIcon className="w-3.5 h-3.5 text-violet-400 shrink-0" />
+                      <span className="text-xs font-mono font-medium text-slate-200 truncate group-hover:text-violet-300">
                         {tbl.table_name}
                       </span>
                     </div>
@@ -259,7 +259,7 @@ export default function Sidebar({
                     onClick={() => onSelectHistory && onSelectHistory(item)}
                     className={`w-full text-left p-2 rounded-lg transition border flex flex-col gap-1 ${
                       isActive
-                        ? 'bg-slate-900/90 border-cyan-500/50 shadow-sm shadow-cyan-950'
+                        ? 'bg-slate-900/90 border-violet-500/50 shadow-sm shadow-violet-950'
                         : 'bg-transparent border-transparent hover:bg-slate-900/40 hover:border-slate-800'
                     }`}
                   >
@@ -309,7 +309,7 @@ export default function Sidebar({
             href="https://sqlite.org/lang.html"
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-cyan-400 transition"
+            className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-violet-300 transition"
           >
             <span>Docs</span>
             <ExternalLink className="w-3 h-3" />

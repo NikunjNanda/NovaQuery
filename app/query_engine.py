@@ -51,34 +51,43 @@ CORRECTION_PROMPT = PromptTemplate.from_template(
     Return ONLY the raw SQL query with no markdown formatting or commentary."""
 )
 
-# One call returns the explanation, purpose, suggestions, and the full lesson text
+# One call returns the explanation, purpose, suggestions and the full lesson (SQLite, and PostgreSQL when it differs)
 EXPLANATION_PROMPT = PromptTemplate.from_template(
-    """You are a friendly database teacher helping a beginner learn SQL.
+    """You are a friendly, thorough database teacher helping a beginner learn SQL.
 
     User Question: {question}
-    Generated SQL: {sql_query}
+    Generated SQL (SQLite): {sql_query}
     Database Schema Context: {schema}
     Clauses of the query, in order (JSON): {clauses_json}
+    {postgres_context}
 
     Return ONLY valid JSON (no markdown, no commentary) in exactly this format:
     {{
-        "explanation": "1-2 simple sentences describing what the query does.",
-        "purpose": "One short sentence on why someone would run this query.",
+        "explanation": "3-5 sentences: what the query does in plain English, step by step, naming the real tables and columns, and what the answer will look like.",
+        "purpose": "1-2 sentences on why someone would run this query in real life.",
         "suggested_queries": ["Follow-up question 1?", "Follow-up question 2?", "Follow-up question 3?"],
         "lesson": {{
-            "translation": "One plain-English sentence translating the whole query.",
-            "step_explanations": ["One short explanation per clause, in the SAME order and count as the clauses above."],
+            "translation": "One or two plain-English sentences translating the whole query.",
+            "step_explanations": ["For each clause, in the SAME order and count as the clauses above: 2-4 sentences covering what the clause does, WHY it is needed in this query, and what happens to the rows at this point."],
+            "execution_order": ["Short numbered steps (for example '1. FROM sheet1: read every row of the table') describing the order in which the database actually runs the clauses of THIS query. Only mention clauses that exist."],
+            "how_to_read": "2-3 sentences on how to read the result: what each returned column means and what one row represents.",
             "concepts": ["#aggregation", "#GROUP_BY"],
-            "pitfall": "One common mistake related to this query, or null if none applies.",
+            "pitfall": "1-2 sentences on one common mistake related to this query, or null if none applies.",
             "modify_ideas": [
                 {{"title": "Short title", "hint": "What to add or change in the SQL", "question": "A natural-language question that applies this change"}}
             ]
-        }}
+        }}{postgres_fields}
     }}
 
-    Rules: use only columns and tables from the schema. Give 2-3 modify_ideas and 2-4 concepts.
-    Keep every text short and beginner-friendly."""
+    Rules: use only columns and tables from the schema, and use their real names in the explanations.
+    Define each SQL term the first time you use it (for example aggregate, group, alias) in simple words.
+    Give 2-3 modify_ideas and 2-4 concepts. Do not use markdown formatting inside the text values."""
 )
+
+# Added to the prompt only when the PostgreSQL version of the query is written differently
+POSTGRES_FIELDS = """,
+        "postgres_step_explanations": ["One explanation per PostgreSQL clause, in the SAME order and count as the PostgreSQL clauses above, with the same level of detail as step_explanations."],
+        "postgres_differences": ["At most 5 short bullets: what is written differently in PostgreSQL than in SQLite, and why (for example a date function or a quoting rule)."]"""
 
 # Turns a follow-up like "now only for setosa" into a complete question
 REWRITE_PROMPT = PromptTemplate.from_template(
@@ -280,7 +289,7 @@ def _with_retry(call):
 # ---------- answer cache (same question on the same dataset = no Gemini call) ----------
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / "query_cache"
-CACHE_VERSION = 2  # bump this when you change the prompts, so old cached answers are not reused
+CACHE_VERSION = 3  # bump this when you change the prompts, so old cached answers are not reused
 
 
 def _cache_enabled() -> bool:
@@ -339,10 +348,10 @@ def _error_response(message: str, sql: str = "", attempts: int = 0) -> dict:
     ).model_dump()
 
 
-def build_clause_steps(sql: str) -> list:
-    """Splits a SELECT query into clause fragments using sqlglot (always accurate)."""
+def build_clause_steps(sql: str, dialect: str = "sqlite") -> list:
+    """Splits a SELECT query into clause fragments using sqlglot (always accurate). dialect: sqlite or postgres."""
     try:
-        tree = sqlglot.parse_one(sql, read="sqlite")
+        tree = sqlglot.parse_one(sql, read=dialect)
     except Exception:
         return []
     if not isinstance(tree, exp.Select):
@@ -354,37 +363,37 @@ def build_clause_steps(sql: str) -> list:
         if fragment:
             steps.append({"clause": clause, "sql": fragment})
 
-    select_sql = ", ".join(e.sql(dialect="sqlite") for e in tree.expressions)
+    select_sql = ", ".join(e.sql(dialect=dialect) for e in tree.expressions)
     if tree.args.get("distinct"):
         select_sql = f"DISTINCT {select_sql}"
     add("SELECT", select_sql)
 
     from_clause = tree.args.get("from") or tree.args.get("from_")  # key name differs between sqlglot versions
     if from_clause is not None:
-        add("FROM", from_clause.this.sql(dialect="sqlite"))
+        add("FROM", from_clause.this.sql(dialect=dialect))
 
     for join in tree.args.get("joins") or []:
-        add("JOIN", join.sql(dialect="sqlite"))
+        add("JOIN", join.sql(dialect=dialect))
 
     where = tree.args.get("where")
     if where is not None:
-        add("WHERE", where.this.sql(dialect="sqlite"))
+        add("WHERE", where.this.sql(dialect=dialect))
 
     group = tree.args.get("group")
     if group is not None:
-        add("GROUP BY", ", ".join(e.sql(dialect="sqlite") for e in group.expressions))
+        add("GROUP BY", ", ".join(e.sql(dialect=dialect) for e in group.expressions))
 
     having = tree.args.get("having")
     if having is not None:
-        add("HAVING", having.this.sql(dialect="sqlite"))
+        add("HAVING", having.this.sql(dialect=dialect))
 
     order = tree.args.get("order")
     if order is not None:
-        add("ORDER BY", ", ".join(e.sql(dialect="sqlite") for e in order.expressions))
+        add("ORDER BY", ", ".join(e.sql(dialect=dialect) for e in order.expressions))
 
     limit = tree.args.get("limit")
     if limit is not None and limit.args.get("expression") is not None:
-        add("LIMIT", limit.args["expression"].sql(dialect="sqlite"))
+        add("LIMIT", limit.args["expression"].sql(dialect=dialect))
 
     return steps
 
@@ -414,9 +423,37 @@ def _execute_readonly(db_path: str, sql: str):
 
 # ---------- teacher / lesson ----------
 
-def generate_teacher_content(question: str, sql_query: str, schema: str) -> dict:
-    """Returns explanation, purpose, suggestions and lesson. Never raises."""
+def _make_lesson(raw_lesson: dict, steps: list) -> Lesson:
+    """Builds a Lesson from the model's JSON. Missing parts stay empty instead of failing."""
+    modify_ideas = []
+    for idea in raw_lesson.get("modify_ideas") or []:
+        if isinstance(idea, dict) and idea.get("title") and idea.get("question"):
+            modify_ideas.append(ModifyIdea(
+                title=str(idea["title"]),
+                hint=str(idea.get("hint", "")),
+                question=str(idea["question"]),
+            ))
+    pitfall = raw_lesson.get("pitfall")
+    how_to_read = raw_lesson.get("how_to_read")
+    order = raw_lesson.get("execution_order")
+    return Lesson(
+        translation=str(raw_lesson.get("translation") or ""),
+        steps=steps,
+        concepts=[str(c) for c in (raw_lesson.get("concepts") or []) if c],
+        pitfall=str(pitfall) if pitfall else None,
+        modify_ideas=modify_ideas,
+        execution_order=[str(x) for x in order if x] if isinstance(order, list) else [],
+        how_to_read=str(how_to_read) if how_to_read else None,
+    )
+
+
+def generate_teacher_content(question: str, sql_query: str, schema: str, postgres_sql: Optional[str] = None) -> dict:
+    """Returns explanation, purpose, suggestions and lessons (SQLite + PostgreSQL). Never raises."""
     steps = build_clause_steps(sql_query)
+    pg_sql = postgres_sql if postgres_sql is not None else to_postgres(sql_query)
+    pg_steps = build_clause_steps(pg_sql, "postgres") if pg_sql else []
+    # same clause fragments -> the SQLite explanations apply word for word
+    pg_differs = bool(pg_steps) and [x["sql"] for x in pg_steps] != [x["sql"] for x in steps]
     default_suggestions = ["Show top 5 rows", "Count total records", "Show column names"]
 
     fallback = {
@@ -425,8 +462,12 @@ def generate_teacher_content(question: str, sql_query: str, schema: str) -> dict
         "purpose": None,
         "suggested_queries": default_suggestions,
         "lesson": Lesson(
-            steps=[LessonStep(clause=s["clause"], sql=s["sql"]) for s in steps]
+            steps=[LessonStep(clause=x["clause"], sql=x["sql"]) for x in steps]
         ) if steps else None,
+        "lesson_postgres": Lesson(
+            steps=[LessonStep(clause=x["clause"], sql=x["sql"]) for x in pg_steps]
+        ) if pg_steps else None,
+        "postgres_notes": None,
     }
     if not llm:
         return fallback
@@ -438,6 +479,11 @@ def generate_teacher_content(question: str, sql_query: str, schema: str) -> dict
             "sql_query": sql_query,
             "schema": schema,
             "clauses_json": json.dumps(steps),
+            "postgres_context": (
+                f"The same query converted to PostgreSQL: {pg_sql}\n"
+                f"Its PostgreSQL clauses, in order (JSON): {json.dumps(pg_steps)}"
+            ) if pg_differs else "",
+            "postgres_fields": POSTGRES_FIELDS if pg_differs else "",
         })
         data = _extract_json(_text(res.content))
     except Exception as e:
@@ -448,26 +494,37 @@ def generate_teacher_content(question: str, sql_query: str, schema: str) -> dict
     step_texts = raw_lesson.get("step_explanations")
     step_texts = step_texts if isinstance(step_texts, list) else []
 
+    def text_at(texts, i):
+        return str(texts[i]) if i < len(texts) and texts[i] else ""
+
     lesson_steps = [
-        LessonStep(
-            clause=s["clause"],
-            sql=s["sql"],
-            explanation=str(step_texts[i]) if i < len(step_texts) else "",
-        )
-        for i, s in enumerate(steps)
+        LessonStep(clause=x["clause"], sql=x["sql"], explanation=text_at(step_texts, i))
+        for i, x in enumerate(steps)
     ]
+    lesson = _make_lesson(raw_lesson, lesson_steps)
 
-    modify_ideas = []
-    for idea in raw_lesson.get("modify_ideas") or []:
-        if isinstance(idea, dict) and idea.get("title") and idea.get("question"):
-            modify_ideas.append(ModifyIdea(
-                title=str(idea["title"]),
-                hint=str(idea.get("hint", "")),
-                question=str(idea["question"]),
-            ))
-
-    concepts = [str(c) for c in (raw_lesson.get("concepts") or []) if c]
-    pitfall = raw_lesson.get("pitfall")
+    # ----- PostgreSQL version of the lesson -----
+    lesson_pg, notes = None, None
+    if pg_steps and not pg_differs:
+        lesson_pg = _make_lesson(raw_lesson, [
+            LessonStep(clause=x["clause"], sql=x["sql"], explanation=text_at(step_texts, i))
+            for i, x in enumerate(pg_steps)
+        ])
+        notes = ["This query needs no changes in PostgreSQL: exactly the same SQL works in both databases."]
+    elif pg_steps:
+        pg_texts = data.get("postgres_step_explanations")
+        pg_texts = pg_texts if isinstance(pg_texts, list) else []
+        same_shape = len(pg_steps) == len(steps)  # then a missing PostgreSQL explanation can reuse the SQLite one
+        lesson_pg = _make_lesson(raw_lesson, [
+            LessonStep(
+                clause=x["clause"], sql=x["sql"],
+                explanation=text_at(pg_texts, i) or (text_at(step_texts, i) if same_shape else ""),
+            )
+            for i, x in enumerate(pg_steps)
+        ])
+        diffs = data.get("postgres_differences")
+        notes = [str(d) for d in diffs if d][:6] if isinstance(diffs, list) else []
+        notes = notes or ["The SQL was converted to PostgreSQL syntax."]
 
     suggested = data.get("suggested_queries")
     suggested = [str(q) for q in suggested] if isinstance(suggested, list) and suggested else default_suggestions
@@ -476,13 +533,9 @@ def generate_teacher_content(question: str, sql_query: str, schema: str) -> dict
         "explanation": str(data.get("explanation") or fallback["explanation"]),
         "purpose": str(data["purpose"]) if data.get("purpose") else None,
         "suggested_queries": suggested,
-        "lesson": Lesson(
-            translation=str(raw_lesson.get("translation") or ""),
-            steps=lesson_steps,
-            concepts=concepts,
-            pitfall=str(pitfall) if pitfall else None,
-            modify_ideas=modify_ideas,
-        ),
+        "lesson": lesson,
+        "lesson_postgres": lesson_pg,
+        "postgres_notes": notes,
     }
 
 
@@ -639,16 +692,19 @@ def run_natural_language_query(
             # Execute (read-only, connection always closed)
             rows, truncated = _execute_readonly(db_path, cleaned_sql)
 
+            pg_sql = to_postgres(cleaned_sql)
+
             # Teacher content (never raises). Skipped when include_teaching=False (used by the benchmark)
             if include_teaching:
-                teacher = generate_teacher_content(user_question, cleaned_sql, db.get_table_info())
+                teacher = generate_teacher_content(user_question, cleaned_sql, db.get_table_info(), postgres_sql=pg_sql)
             else:
-                teacher = {"explanation": "", "purpose": None, "suggested_queries": [], "lesson": None}
+                teacher = {"explanation": "", "purpose": None, "suggested_queries": [], "lesson": None,
+                           "lesson_postgres": None, "postgres_notes": None}
 
             response_dict = QueryResponse(
                 success=True,
                 generated_sql=cleaned_sql,
-                postgres_sql=to_postgres(cleaned_sql),
+                postgres_sql=pg_sql,
                 data=rows,
                 results=rows,
                 explanation=teacher["explanation"],
@@ -658,6 +714,8 @@ def run_natural_language_query(
                 row_count=len(rows),
                 truncated=truncated,
                 lesson=teacher["lesson"],
+                lesson_postgres=teacher.get("lesson_postgres"),
+                postgres_notes=teacher.get("postgres_notes"),
             ).model_dump()
 
             if cache_key and not teacher.get("degraded"):

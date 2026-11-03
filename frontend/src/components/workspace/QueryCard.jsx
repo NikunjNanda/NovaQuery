@@ -46,7 +46,7 @@ export default function QueryCard({
             onClick={() => onChangeMode('english')}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition ${
               isEnglish
-                ? 'bg-slate-800 text-cyan-400 shadow-sm'
+                ? 'bg-slate-800 text-violet-300 border border-violet-500/20 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -58,7 +58,7 @@ export default function QueryCard({
             onClick={() => onChangeMode('sql')}
             className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium transition ${
               !isEnglish
-                ? 'bg-slate-800 text-cyan-400 shadow-sm'
+                ? 'bg-slate-800 text-violet-300 border border-violet-500/20 shadow-sm'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -69,7 +69,7 @@ export default function QueryCard({
 
         {/* Engine status pill */}
         <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-full bg-[#05080f] border border-[#151f33] text-[11px] font-mono text-slate-400">
-          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+          <span className="w-1.5 h-1.5 rounded-full bg-violet-400" />
           <span>SQLite Engine</span>
         </div>
       </div>
@@ -84,9 +84,9 @@ export default function QueryCard({
           placeholder={
             isEnglish
               ? (filename ? `Ask any question about ${filename}, or pick a starter question below...` : 'Ask any question about your data, or pick a starter question below...')
-              : (filename ? `SELECT * FROM ${filename.replace(/\.[^/.]+$/, '')} LIMIT 10;` : 'SELECT * FROM table_name LIMIT 10;')
+              : 'SELECT ... FROM ... (read-only: only SELECT queries are allowed)'
           }
-          className="w-full bg-[#05080f] border border-[#151f33] focus:border-cyan-500/80 rounded-xl p-3.5 text-xs sm:text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none transition resize-none leading-relaxed"
+          className="w-full bg-[#05080f] border border-[#151f33] focus:border-violet-500/80 focus:ring-1 focus:ring-violet-500/30 rounded-xl p-3.5 text-xs sm:text-sm font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none transition resize-none leading-relaxed"
         />
       </div>
 
@@ -95,7 +95,7 @@ export default function QueryCard({
         <div className="flex items-center gap-2 text-xs text-slate-400">
           {isEnglish ? (
             <>
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+              <Sparkles className="w-3.5 h-3.5 text-violet-400 shrink-0" />
               <span className="text-[11px] text-slate-400 hidden sm:inline">
                 Generates verified SQL query with pedagogical explanation
               </span>
@@ -125,7 +125,7 @@ export default function QueryCard({
           <button
             onClick={onRunQuery}
             disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 active:scale-95 text-slate-950 font-semibold text-xs transition shadow-md shadow-cyan-950 disabled:opacity-50 select-none"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 active:scale-95 text-white font-semibold text-xs transition shadow-md shadow-violet-950 disabled:opacity-50 select-none"
           >
             <Play className="w-3.5 h-3.5 fill-current" />
             <span>Run Analysis</span>
@@ -135,7 +135,7 @@ export default function QueryCard({
 
       {/* Temporary Notice for Stage 2 Run Handler feedback */}
       {runNotice && (
-        <div className="p-2.5 rounded-lg bg-cyan-950/40 border border-cyan-800/50 text-xs font-mono text-cyan-300 flex items-center justify-between animate-fadeIn">
+        <div className="p-2.5 rounded-lg bg-violet-950/40 border border-violet-800/50 text-xs font-mono text-violet-300 flex items-center justify-between animate-fadeIn">
           <span>{runNotice}</span>
         </div>
       )}
@@ -150,9 +150,9 @@ export default function QueryCard({
             <button
               key={index}
               onClick={() => onSelectSuggestion && onSelectSuggestion(suggestion)}
-              className="text-left text-xs text-slate-300 hover:text-cyan-300 bg-[#05080f] hover:bg-[#0c1424] border border-[#151f33] hover:border-cyan-600/50 px-2.5 py-1 rounded-full transition flex items-center gap-1.5 group"
+              className="text-left text-xs text-slate-300 hover:text-violet-200 bg-[#05080f] hover:bg-[#0f1124] border border-[#151f33] hover:border-violet-500/50 px-2.5 py-1 rounded-full transition flex items-center gap-1.5 group"
             >
-              <Sparkles className="w-3 h-3 text-cyan-400 group-hover:scale-110 transition-transform" />
+              <Sparkles className="w-3 h-3 text-violet-400 group-hover:scale-110 transition-transform" />
               <span>"{suggestion}"</span>
             </button>
           ))}

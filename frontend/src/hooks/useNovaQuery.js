@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchProfile, executeQuery, uploadDatabase } from '../api';
+import { fetchProfile, executeQuery, uploadDatabase, runSql } from '../api';
 
 /**
  * Primary state management hook for NovaQuery.
@@ -28,6 +28,7 @@ export function useNovaQuery() {
   // Query output state & performance timing
   const [queryResult, setQueryResult] = useState(null);
   const [responseTime, setResponseTime] = useState(null);
+  const [sqlDialect, setSqlDialect] = useState('sqlite');
 
   // Query history: starts empty, in-memory only
   const [history, setHistory] = useState([]);
@@ -156,7 +157,9 @@ export function useNovaQuery() {
     const startTime = performance.now();
 
     try {
-      const res = await executeQuery(questionToRun, dbPath, 'SQLite',recent); 
+      const res = queryMode === 'sql'
+        ? await runSql(questionToRun, dbPath)
+        : await executeQuery(questionToRun, dbPath, 'SQLite', recent);
       const endTime = performance.now();
       const elapsed = endTime - startTime;
       setResponseTime(elapsed);
@@ -175,7 +178,7 @@ export function useNovaQuery() {
       const formattedResult = {
         data: dataRows,
         generated_sql: res?.generated_sql || '',
-         postgres_sql: res?.postgres_sql || '',
+        postgres_sql: res?.postgres_sql || '',
         explanation: res?.explanation || '',
         purpose: res?.purpose || null,
         suggested_queries: Array.isArray(res?.suggested_queries) ? res.suggested_queries : [],
@@ -183,16 +186,23 @@ export function useNovaQuery() {
         row_count: res?.row_count ?? dataRows.length,
         truncated: Boolean(res?.truncated),
         lesson: lessonData,
+        lesson_postgres: res?.lesson_postgres || null,
+        postgres_notes: Array.isArray(res?.postgres_notes) ? res.postgres_notes : [],
       };  
 
       setQueryResult(formattedResult);
+      setSqlDialect('sqlite');
 
       // Append to real history list
       const newHistoryItem = {
         id: `hist-${Date.now()}`,
         question: questionToRun,
         sql: res?.generated_sql || '',
+        postgres_sql: res?.postgres_sql || '',
         postgresSql: res?.postgres_sql || '', 
+        lesson: lessonData,
+        lesson_postgres: res?.lesson_postgres || null,
+        postgres_notes: Array.isArray(res?.postgres_notes) ? res.postgres_notes : [],
         status: 'executed',
         executedAt: new Date().toISOString(),
         executionTimeMs: elapsed,
@@ -220,6 +230,11 @@ export function useNovaQuery() {
         id: `hist-${Date.now()}`,
         question: questionToRun,
         sql: '',
+        postgres_sql: '',
+        postgresSql: '',
+        lesson: null,
+        lesson_postgres: null,
+        postgres_notes: [],
         status: 'error',
         executedAt: new Date().toISOString(),
         executionTimeMs: elapsed,
@@ -232,14 +247,35 @@ export function useNovaQuery() {
     } finally {
       setLoadingQuery(false);
     }
-  }, [queryText, dbPath , history]); 
+  }, [queryText, dbPath, history, queryMode]); 
 
   const handleSelectHistory = (item) => {
     setActiveHistoryId(item.id);
     setQueryText(item.question);
     if (item.sql) {
-      // Re-populate query result view if available
-      setQueryResult((prev) => prev ? { ...prev, generated_sql: item.sql,postgres_sql: item.postgresSql || ''  } : null);
+      // Re-populate query result view with full lesson details if available
+      setQueryResult((prev) => prev ? {
+        ...prev,
+        generated_sql: item.sql,
+        postgres_sql: item.postgres_sql || item.postgresSql || '',
+        lesson: item.lesson || null,
+        lesson_postgres: item.lesson_postgres || null,
+        postgres_notes: Array.isArray(item.postgres_notes) ? item.postgres_notes : [],
+      } : {
+        data: [],
+        generated_sql: item.sql,
+        postgres_sql: item.postgres_sql || item.postgresSql || '',
+        explanation: '',
+        purpose: null,
+        suggested_queries: [],
+        attempts_needed: 1,
+        row_count: item.rowCount || 0,
+        truncated: false,
+        lesson: item.lesson || null,
+        lesson_postgres: item.lesson_postgres || null,
+        postgres_notes: Array.isArray(item.postgres_notes) ? item.postgres_notes : [],
+      });
+      setSqlDialect('sqlite');
     }
   }; 
 
@@ -265,6 +301,8 @@ export function useNovaQuery() {
     queryResult,
     setQueryResult,
     responseTime,
+    sqlDialect,
+    setSqlDialect,
     runQuery,
     history,
     setHistory,

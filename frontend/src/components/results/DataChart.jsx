@@ -17,12 +17,12 @@ import {
 import { THEME } from '../../constants/theme';
 
 const PIE_COLORS = [
-  '#06b6d4', // cyan-500
+  '#8b5cf6', // violet-500
   '#6366f1', // indigo-500
+  '#06b6d4', // cyan-500
   '#10b981', // emerald-500
   '#f59e0b', // amber-500
   '#f43f5e', // rose-500
-  '#8b5cf6', // violet-500
 ];
 
 /**
@@ -108,7 +108,7 @@ export default function DataChart({ data = [] }) {
       <div className="flex items-center justify-between flex-wrap gap-2 px-1">
         <div className="flex items-center gap-2 text-xs font-mono text-slate-400">
           <span className="text-[11px] text-slate-500 uppercase tracking-wider">Dimension:</span>
-          <span className="text-cyan-400 font-semibold">{xAxisKey}</span>
+          <span className="text-violet-400 font-semibold">{xAxisKey}</span>
           <span className="text-slate-600">•</span>
           <span className="text-[11px] text-slate-500 uppercase tracking-wider">Metric:</span>
           <span className="text-slate-200">{numericKeys.join(', ')}</span>
@@ -120,7 +120,7 @@ export default function DataChart({ data = [] }) {
             onClick={() => setSelectedChartType('auto')}
             className={`px-2.5 py-0.5 rounded transition ${
               selectedChartType === 'auto'
-                ? 'bg-slate-800 text-cyan-400 font-medium'
+                ? 'bg-slate-800 text-violet-300 font-medium'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -130,7 +130,7 @@ export default function DataChart({ data = [] }) {
             onClick={() => setSelectedChartType('bar')}
             className={`px-2 py-0.5 rounded transition ${
               selectedChartType === 'bar'
-                ? 'bg-slate-800 text-cyan-400 font-medium'
+                ? 'bg-slate-800 text-violet-300 font-medium'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -140,7 +140,7 @@ export default function DataChart({ data = [] }) {
             onClick={() => setSelectedChartType('line')}
             className={`px-2 py-0.5 rounded transition ${
               selectedChartType === 'line'
-                ? 'bg-slate-800 text-cyan-400 font-medium'
+                ? 'bg-slate-800 text-violet-300 font-medium'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -150,7 +150,7 @@ export default function DataChart({ data = [] }) {
             onClick={() => setSelectedChartType('pie')}
             className={`px-2 py-0.5 rounded transition ${
               selectedChartType === 'pie'
-                ? 'bg-slate-800 text-cyan-400 font-medium'
+                ? 'bg-slate-800 text-violet-300 font-medium'
                 : 'text-slate-400 hover:text-slate-200'
             }`}
           >
@@ -188,7 +188,7 @@ export default function DataChart({ data = [] }) {
                 <Bar
                   key={key}
                   dataKey={key}
-                  fill={i === 0 ? '#06b6d4' : PIE_COLORS[i % PIE_COLORS.length]}
+                  fill={i === 0 ? '#8b5cf6' : PIE_COLORS[i % PIE_COLORS.length]}
                   radius={[4, 4, 0, 0]}
                 />
               ))}
@@ -220,9 +220,9 @@ export default function DataChart({ data = [] }) {
                   key={key}
                   type="monotone"
                   dataKey={key}
-                  stroke={i === 0 ? '#06b6d4' : PIE_COLORS[i % PIE_COLORS.length]}
+                  stroke={i === 0 ? '#8b5cf6' : PIE_COLORS[i % PIE_COLORS.length]}
                   strokeWidth={2}
-                  dot={{ fill: '#06b6d4', r: 3 }}
+                  dot={{ fill: '#8b5cf6', r: 3 }}
                   activeDot={{ r: 5 }}
                 />
               ))}

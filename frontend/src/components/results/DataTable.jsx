@@ -88,7 +88,7 @@ export default function DataTable({ data = [], maxRows = 100 }) {
                     <td key={col} className="p-3 text-slate-300">
                       <div className="flex items-center gap-2">
                         {isFirstCol && (
-                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 shrink-0" />
+                          <span className="w-1.5 h-1.5 rounded-full bg-violet-400 shrink-0" />
                         )}
                         <span>{val !== null && val !== undefined ? String(val) : 'NULL'}</span>
                       </div>
@@ -102,7 +102,7 @@ export default function DataTable({ data = [], maxRows = 100 }) {
                     <div className="flex items-center justify-end gap-2">
                       <div className="w-16 sm:w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
                         <div
-                          className="h-full bg-gradient-to-r from-cyan-500 to-emerald-400 rounded-full"
+                          className="h-full bg-gradient-to-r from-violet-500 to-indigo-400 rounded-full"
                           style={{
                             width: `${Math.min(100, Math.max(0, (Number(row[numericColumn]) / maxNumericValue) * 100))}%`,
                           }}

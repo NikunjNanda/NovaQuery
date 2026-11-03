@@ -8,7 +8,12 @@ export default {
     extend: {
       colors: {
         darkBg: "#07090e",
-      }
+      },
+      fontFamily: {
+        geist: ["Geist", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "monospace"],
+        editorial: ["Newsreader", "serif"],
+      },
     },
   },
   plugins: [],

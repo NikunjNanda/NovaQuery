@@ -9,6 +9,14 @@ export const executeQuery = async (question, dbPath, dialect = 'SQLite', history
   return response.data;
 };
 
+export const runSql = async (sql, dbPath) => {
+  const response = await axios.post(`${API_BASE}/run-sql`, {
+    sql,
+    db_path: dbPath,
+  });
+  return response.data;
+};
+
 export const uploadDatabase = async (file) => {
   const formData = new FormData();
   formData.append('file', file);

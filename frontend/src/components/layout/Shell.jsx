@@ -66,7 +66,7 @@ export default function Shell({
               onClick={() => setSidebarOpen(true)}
               className="flex items-center gap-2 text-xs font-mono text-slate-300 px-2.5 py-1.5 rounded-md bg-slate-900 border border-slate-800"
             >
-              <Menu className="w-3.5 h-3.5 text-cyan-400" />
+              <Menu className="w-3.5 h-3.5 text-violet-400" />
               <span>Schema & History</span>
             </button>
             {datasetInfo && (

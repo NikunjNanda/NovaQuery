@@ -15,7 +15,7 @@ export default function ClauseCard({
   explanation,
 }) {
   return (
-    <div className="bg-[#090e1a] border border-[#1a243a] rounded-xl p-3.5 flex flex-col gap-2 transition hover:border-cyan-500/30">
+    <div className="bg-[#090e1a] border border-[#1a243a] rounded-xl p-3.5 flex flex-col gap-2 transition hover:border-violet-500/30">
       {/* Header: Clause Chip + SQL expression */}
       <div className="flex items-start gap-2 flex-wrap">
         <Chip label={clause} variant="clause" className="shrink-0" />
@@ -27,9 +27,11 @@ export default function ClauseCard({
       </div>
 
       {/* Explanation text */}
-      <p className="text-xs text-slate-300 leading-relaxed font-sans">
-        {explanation}
-      </p>
+      {explanation && explanation.trim() ? (
+        <p className="text-xs text-slate-300 leading-relaxed font-sans whitespace-pre-line break-words">
+          {explanation}
+        </p>
+      ) : null}
     </div>
   );
 }
