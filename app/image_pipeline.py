@@ -24,6 +24,11 @@ class ZipLimitException(Exception):
     pass
 
 
+class NoMetadataException(Exception):
+    """Raised when an uploaded ZIP contains images but no metadata file."""
+    pass
+
+
 def is_symlink(zip_info: zipfile.ZipInfo) -> bool:
     """Checks if a zipinfo entry is a symbolic link."""
     return ((zip_info.external_attr >> 16) & 0o120000) == 0o120000
@@ -244,3 +249,80 @@ def process_zip_dataset(
         "warnings": warnings,
         "total_uncompressed_bytes": total_uncompressed,
     }
+
+
+def select_metadata_file(metadata_entries: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Selects exactly one metadata file from the ZIP entries.
+    If none: raises NoMetadataException.
+    If several: selects the largest and returns a warning.
+    """
+    warnings: List[str] = []
+    if not metadata_entries:
+        raise NoMetadataException(
+            "Images-only datasets are not supported yet. Please include a CSV, Excel, or JSON metadata file in your ZIP."
+        )
+
+    if len(metadata_entries) == 1:
+        return metadata_entries[0], warnings
+
+    # Multiple metadata files: pick the largest
+    sorted_meta = sorted(metadata_entries, key=lambda m: m.get("size_bytes", 0), reverse=True)
+    chosen = sorted_meta[0]
+    ignored = [m["filename"] for m in sorted_meta[1:]]
+    warnings.append(
+        f"Multiple metadata files found in ZIP. Using the largest ('{chosen['filename']}') and ignoring {', '.join(ignored)}."
+    )
+    return chosen, warnings
+
+
+def detect_image_columns(df: Any, stored_filenames: List[str], threshold: float = 0.60) -> List[str]:
+    """
+    Detects which columns hold image filenames:
+    - >= 60% of non-null values match a stored file name
+    - Case-insensitive
+    - Ignoring folders (e.g. 'images/cat.jpg' matches 'cat.jpg')
+    - Tolerate missing extension if unique (e.g. 'cat' matches 'cat.jpg' if only one file has stem 'cat')
+    """
+    if df is None or not stored_filenames:
+        return []
+
+    # Build lookup dictionaries
+    exact_names = {f.lower(): f for f in stored_filenames}
+    
+    stem_to_files: Dict[str, List[str]] = {}
+    for f in stored_filenames:
+        stem = Path(f).stem.lower()
+        stem_to_files.setdefault(stem, []).append(f)
+    unique_stems = {stem: files[0] for stem, files in stem_to_files.items() if len(files) == 1}
+
+    detected = []
+
+    for col in df.columns:
+        vals = [v for v in df[col].dropna() if v is not None]
+        if not vals:
+            continue
+
+        matches = 0
+        for v in vals:
+            s = str(v).strip()
+            if not s:
+                continue
+            base = Path(s.replace("\\", "/")).name.lower()
+            if not base:
+                continue
+
+            # 1. Exact match with extension
+            if base in exact_names:
+                matches += 1
+            else:
+                # 2. Match without extension if unique
+                stem = Path(base).stem.lower()
+                if stem in unique_stems:
+                    matches += 1
+
+        ratio = matches / len(vals)
+        if ratio >= threshold:
+            detected.append(col)
+
+    return detected

@@ -1,5 +1,6 @@
 import os 
 import re 
+import io
 from pathlib import Path 
 import shutil  
 import uuid
@@ -32,8 +33,11 @@ app.add_middleware(
 
 from app.image_pipeline import (
     process_zip_dataset,
+    select_metadata_file,
+    detect_image_columns,
     ZipSlipException,
     ZipLimitException,
+    NoMetadataException,
     MAX_ZIP_BYTES,
 )
 
@@ -138,6 +142,7 @@ def load_file_into_sqlite(
     engine,
     existing_tables: set,
     workspace_id: Optional[str] = None,
+    image_context: Optional[Dict[str, Any]] = None,
 ) -> list:
     """
     Loads a single tabular file, SQLite database, or ZIP archive into an existing SQLite engine.
@@ -149,34 +154,41 @@ def load_file_into_sqlite(
         ws_id = workspace_id or uuid.uuid4().hex[:12]
         zip_result = process_zip_dataset(file_path, ws_id, UPLOAD_ROOT)
 
-        for meta in zip_result.get("metadata_entries", []):
-            meta_name = meta["filename"]
-            meta_stem, meta_ext = os.path.splitext(meta_name)
-            temp_meta_path = UPLOAD_ROOT / f"tmp_{ws_id}_{meta_name}"
-            temp_meta_path.write_bytes(meta["data"])
-            try:
-                sub_created = load_file_into_sqlite(
-                    temp_meta_path, meta_ext.lower(), meta_stem, engine, existing_tables, ws_id
-                )
-                tables_created.extend(sub_created)
-            finally:
-                temp_meta_path.unlink(missing_ok=True)
+        meta, meta_warnings = select_metadata_file(zip_result.get("metadata_entries", []))
+        all_warnings = list(zip_result.get("warnings", [])) + meta_warnings
 
-        if not tables_created and zip_result.get("images"):
-            t_name = generate_unique_table_name(stem, existing_tables)
-            df = pd.DataFrame([
-                {
-                    "image_id": idx + 1,
-                    "filename": img["stored_name"],
-                    "format": img["format"],
-                    "size_kb": round(img["size_bytes"] / 1024, 1),
-                }
-                for idx, img in enumerate(zip_result["images"])
-            ])
-            df.to_sql(t_name, con=engine, if_exists="replace", index=False)
-            tables_created.append(t_name)
+        meta_name = meta["filename"]
+        meta_ext = Path(meta_name).suffix.lower()
+        raw_data = io.BytesIO(meta["data"])
 
-    if ext == ".csv":
+        if meta_ext == ".csv":
+            df = pd.read_csv(raw_data)
+        elif meta_ext in {".xlsx", ".xls"}:
+            df = pd.read_excel(raw_data)
+        elif meta_ext == ".json":
+            df = pd.read_json(raw_data)
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported metadata format '{meta_ext}'.")
+
+        df.columns = sanitize_dataframe_columns(df.columns)
+        t_name = generate_unique_table_name(stem, existing_tables)
+        df.to_sql(t_name, con=engine, if_exists="replace", index=False)
+        tables_created.append(t_name)
+        existing_tables.add(t_name)
+
+        stored_filenames = [img["stored_name"] for img in zip_result.get("images", [])]
+        detected_image_cols = detect_image_columns(df, stored_filenames)
+
+        if image_context is not None:
+            image_context.setdefault("image_columns", {})[t_name] = detected_image_cols
+            image_context["image_filenames"] = stored_filenames
+            image_context["image_count"] = len(stored_filenames)
+            image_context.setdefault("available_columns", {})[t_name] = list(df.columns)
+            image_context.setdefault("warnings", []).extend(all_warnings)
+            image_context["workspace_id"] = ws_id
+            image_context["images"] = zip_result.get("images", [])
+
+    elif ext == ".csv":
         t_name = generate_unique_table_name(stem, existing_tables)
         df = pd.read_csv(file_path)
         df.columns = sanitize_dataframe_columns(df.columns)
@@ -299,6 +311,12 @@ class ConfirmRelationshipsRequest(BaseModel):
     db_path: Optional[str] = None
     workspace_id: Optional[str] = None
     relationships: List[Dict[str, Any]] = Field(default_factory=list)
+
+class SetImageColumnRequest(BaseModel):
+    column: str
+    table: Optional[str] = None
+    db_path: Optional[str] = None
+    workspace_id: Optional[str] = None
 
 class QuizRequest(BaseModel):
     question: str
@@ -461,9 +479,12 @@ async def upload_database(file: UploadFile = File(...)):
             workspace_id = uuid.uuid4().hex[:12]
             target_sqlite_path = (UPLOAD_ROOT / f"workspace_{workspace_id}.db").resolve()
             engine = create_engine(f"sqlite:///{target_sqlite_path}")
-            tables_created = load_file_into_sqlite(temp_path, ext, stem, engine, set(), workspace_id)
+            image_ctx = {}
+            tables_created = load_file_into_sqlite(
+                temp_path, ext, stem, engine, set(), workspace_id, image_context=image_ctx
+            )
             final_path = target_sqlite_path
-            base_table_name = tables_created[0] if tables_created else "images"
+            base_table_name = tables_created[0] if tables_created else clean_identifier(stem)
 
         else:
             engine = create_engine(f"sqlite:///{target_sqlite_path}")
@@ -507,7 +528,41 @@ async def upload_database(file: UploadFile = File(...)):
         # Track the uploaded database as the active target
         active_db_target["type"] = "file"
         active_db_target["path"] = str(final_path)
-        active_db_target["original_filename"] = original_name        
+        active_db_target["original_filename"] = original_name
+
+        if ext == ".zip":
+            active_db_target["type"] = "workspace"
+            active_db_target["workspace_id"] = image_ctx.get("workspace_id", workspace_id)
+            active_db_target["tables"] = tables_created
+            active_db_target["image_columns"] = image_ctx.get("image_columns", {})
+            active_db_target["image_filenames"] = image_ctx.get("image_filenames", [])
+
+            workspaces_state[str(final_path)] = {
+                "workspace_id": image_ctx.get("workspace_id", workspace_id),
+                "db_path": str(final_path),
+                "original_filename": original_name,
+                "tables": tables_created,
+                "image_columns": image_ctx.get("image_columns", {}),
+                "image_filenames": image_ctx.get("image_filenames", []),
+                "available_columns": image_ctx.get("available_columns", {}),
+                "image_count": image_ctx.get("image_count", 0),
+                "warnings": image_ctx.get("warnings", []),
+            }
+
+            return {
+                "success": True,
+                "filename": final_path.name,
+                "original_filename": original_name,
+                "db_path": str(final_path),
+                "workspace_id": image_ctx.get("workspace_id", workspace_id),
+                "type": "workspace",
+                "tables": tables_created,
+                "image_columns": image_ctx.get("image_columns", {}) or {},
+                "image_count": image_ctx.get("image_count", 0),
+                "image_filenames": image_ctx.get("image_filenames", []),
+                "available_columns": image_ctx.get("available_columns", {}),
+                "warnings": image_ctx.get("warnings", []),
+            }
 
         return {
             "success": True,
@@ -517,8 +572,8 @@ async def upload_database(file: UploadFile = File(...)):
             "type": "converted",
         }
 
-    except (ZipSlipException, ZipLimitException) as ze:
-        status_code = 400 if isinstance(ze, ZipSlipException) else 413
+    except (ZipSlipException, ZipLimitException, NoMetadataException) as ze:
+        status_code = 413 if isinstance(ze, ZipLimitException) else 400
         raise HTTPException(status_code=status_code, detail=str(ze))
     except HTTPException:
         raise  # keep real 400 / 413 errors instead of turning them into 500s
@@ -574,13 +629,29 @@ async def upload_multiple_databases(files: List[UploadFile] = File(...)):
         existing_tables = set()
         file_to_tables = {}
         all_created_tables = []
+        ws_image_columns = {}
+        ws_image_filenames = []
+        ws_available_columns = {}
+        ws_warnings = []
+        total_images = 0
 
         for temp_path, stem, ext, original_name in temp_files:
+            file_img_ctx = {}
             created = load_file_into_sqlite(
-                temp_path, ext, stem, workspace_engine, existing_tables, workspace_id
+                temp_path, ext, stem, workspace_engine, existing_tables, workspace_id, image_context=file_img_ctx
             )
             file_to_tables[original_name] = created
             all_created_tables.extend(created)
+            if file_img_ctx:
+                if file_img_ctx.get("image_columns"):
+                    ws_image_columns.update(file_img_ctx["image_columns"])
+                if file_img_ctx.get("image_filenames"):
+                    ws_image_filenames.extend(file_img_ctx["image_filenames"])
+                if file_img_ctx.get("available_columns"):
+                    ws_available_columns.update(file_img_ctx["available_columns"])
+                if file_img_ctx.get("warnings"):
+                    ws_warnings.extend(file_img_ctx["warnings"])
+                total_images += file_img_ctx.get("image_count", 0)
 
         # 3. Collect columns for each table
         inspector = inspect(workspace_engine)
@@ -604,6 +675,11 @@ async def upload_multiple_databases(files: List[UploadFile] = File(...)):
             "tables": all_created_tables,
             "table_columns": table_columns,
             "relationships": relationships,
+            "image_columns": ws_image_columns,
+            "image_filenames": ws_image_filenames,
+            "available_columns": ws_available_columns,
+            "image_count": total_images,
+            "warnings": ws_warnings,
         }
 
         # Enforce "must share fields": if no relationships found, return HTTP 422
@@ -617,6 +693,9 @@ async def upload_multiple_databases(files: List[UploadFile] = File(...)):
                     "tables": all_created_tables,
                     "table_columns": table_columns,
                     "file_to_tables": file_to_tables,
+                    "image_columns": ws_image_columns,
+                    "image_filenames": ws_image_filenames,
+                    "available_columns": ws_available_columns,
                 },
             )
 
@@ -626,6 +705,8 @@ async def upload_multiple_databases(files: List[UploadFile] = File(...)):
         active_db_target["original_filename"] = summary_name
         active_db_target["tables"] = all_created_tables
         active_db_target["relationships"] = relationships
+        active_db_target["image_columns"] = ws_image_columns
+        active_db_target["image_filenames"] = ws_image_filenames
 
         return {
             "success": True,
@@ -637,11 +718,16 @@ async def upload_multiple_databases(files: List[UploadFile] = File(...)):
             "file_to_tables": file_to_tables,
             "table_columns": table_columns,
             "relationships": relationships,
+            "image_columns": ws_image_columns,
+            "image_count": total_images,
+            "image_filenames": ws_image_filenames,
+            "available_columns": ws_available_columns,
+            "warnings": ws_warnings,
             "type": "workspace",
         }
 
-    except (ZipSlipException, ZipLimitException) as ze:
-        status_code = 400 if isinstance(ze, ZipSlipException) else 413
+    except (ZipSlipException, ZipLimitException, NoMetadataException) as ze:
+        status_code = 413 if isinstance(ze, ZipLimitException) else 400
         raise HTTPException(status_code=status_code, detail=str(ze))
     except HTTPException:
         raise
@@ -718,6 +804,99 @@ async def confirm_relationships(payload: ConfirmRelationshipsRequest):
             "tables": list(existing_tables),
             "relationships": validated_relationships,
             "message": f"Workspace activated with {len(validated_relationships)} confirmed relationships.",
+        }
+    finally:
+        if engine is not None:
+            engine.dispose() 
+
+
+@app.post("/api/set-image-column")
+async def set_image_column(payload: SetImageColumnRequest):
+    """
+    Manually specifies which column in a table holds image filenames.
+    Validates that the table and column exist in the database.
+    Updates workspace state and active_db_target.
+    """
+    if not payload.column or not payload.column.strip():
+        raise HTTPException(status_code=400, detail="Column name cannot be empty.")
+
+    target = None
+    if payload.db_path:
+        target = resolve_target(payload.db_path)
+    elif payload.workspace_id:
+        for p, ws in workspaces_state.items():
+            if ws.get("workspace_id") == payload.workspace_id:
+                target = p
+                break
+        if not target:
+            candidate = (UPLOAD_ROOT / f"workspace_{payload.workspace_id}.db").resolve()
+            if candidate.is_file():
+                target = str(candidate)
+
+    if not target:
+        target = active_db_target.get("path")
+
+    if not target or not Path(target).is_file():
+        raise HTTPException(status_code=400, detail="Database not found. Please upload your dataset first.")
+
+    engine = None
+    try:
+        engine = create_engine(f"sqlite:///{os.path.abspath(target)}")
+        inspector = inspect(engine)
+        existing_tables = inspector.get_table_names()
+        if not existing_tables:
+            raise HTTPException(status_code=400, detail="Database contains no tables.")
+
+        table_name = payload.table
+        if not table_name:
+            if len(existing_tables) == 1:
+                table_name = existing_tables[0]
+            else:
+                matching_tables = []
+                for t in existing_tables:
+                    col_names = [c["name"].lower() for c in inspector.get_columns(t)]
+                    if payload.column.strip().lower() in col_names:
+                        matching_tables.append(t)
+                if len(matching_tables) == 1:
+                    table_name = matching_tables[0]
+                elif len(matching_tables) > 1:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Column '{payload.column}' exists in multiple tables ({matching_tables}). Please specify 'table'.",
+                    )
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Column '{payload.column}' not found in any table. Available tables: {existing_tables}",
+                    )
+        elif table_name not in existing_tables:
+            raise HTTPException(status_code=400, detail=f"Table '{table_name}' does not exist in workspace.")
+
+        cols = [c["name"] for c in inspector.get_columns(table_name)]
+        matched_col = next((c for c in cols if c.lower() == payload.column.strip().lower()), None)
+        if not matched_col:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Column '{payload.column}' not found in table '{table_name}'. Available columns: {cols}",
+            )
+
+        if target not in workspaces_state:
+            workspaces_state[target] = {
+                "db_path": target,
+                "tables": existing_tables,
+                "image_columns": {},
+            }
+
+        workspaces_state[target].setdefault("image_columns", {})[table_name] = [matched_col]
+
+        if active_db_target.get("path") == target:
+            active_db_target.setdefault("image_columns", {})[table_name] = [matched_col]
+
+        return {
+            "success": True,
+            "table": table_name,
+            "image_column": matched_col,
+            "image_columns": workspaces_state[target]["image_columns"],
         }
     finally:
         if engine is not None:
