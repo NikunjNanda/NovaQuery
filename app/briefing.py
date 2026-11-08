@@ -3,6 +3,7 @@ import os
 import time 
 import hashlib 
 from pathlib import Path 
+from typing import Optional, List, Dict, Any 
 
 from langchain_core.prompts import PromptTemplate
 from sqlalchemy import create_engine, inspect, text
@@ -30,9 +31,9 @@ FAIL_TTL_SECONDS = 300  # after an AI failure, reuse the fallback for 5 minutes
 CACHE_DIR = Path("briefing_cache")
 
 
-def _schema_key(schema: list) -> str:
+def _schema_key(schema: list, relationships: Optional[list] = None) -> str:
     return hashlib.sha256(
-        json.dumps(schema, sort_keys=True, default=str).encode("utf-8")
+        json.dumps([schema, relationships or []], sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
 
 
@@ -59,12 +60,13 @@ BRIEFING_PROMPT = PromptTemplate.from_template(
     """You are a friendly data teacher helping a beginner understand an uploaded dataset and learn SQL from it.
 
     Dataset (JSON; includes statistics, top values of category columns, and a few sample rows per table): {schema_json}
+    Relationships between tables (JOIN keys): {relationships_json}
 
     Return ONLY valid JSON (no markdown, no commentary) in exactly this format:
     {{
         "description": "2-3 plain sentences describing what this data contains.",
         "overview": {{
-            "paragraph": "A detailed paragraph of 5-7 plain sentences: what the data appears to be about, what kind of information the columns record, and notable ranges, categories or data quality.",
+            "paragraph": "A detailed paragraph of 5-7 plain sentences: what the data appears to be about, what kind of information the columns record, and notable ranges, categories or data quality. When relationships exist, describe how tables link together.",
             "explore": "One sentence on the kinds of questions this data can answer."
         }},
         "insight": {{
@@ -88,8 +90,8 @@ BRIEFING_PROMPT = PromptTemplate.from_template(
     Rules:
     - Give exactly 9 starter_queries: 3 beginner, 3 intermediate, 3 advanced.
     - Beginner: SELECT, WHERE, DISTINCT, LIMIT, ORDER BY.
-      Intermediate: GROUP BY, COUNT, AVG, MIN, MAX (a simple JOIN only if there are several related tables).
-      Advanced: HAVING, subqueries, window functions such as RANK() OVER, CASE WHEN.
+      Intermediate: GROUP BY, COUNT, AVG, MIN, MAX (when relationships exist between tables, include cross-table questions that practice simple JOINs across related tables).
+      Advanced: HAVING, subqueries, window functions such as RANK() OVER, CASE WHEN, and cross-table JOIN analytics.
     - Use ONLY tables and columns that exist above. Each question must be answerable with a single SELECT.
     - In the overview paragraph, use ONLY facts and numbers from the statistics above (min, max, avg, top values, missing counts).
       Do NOT invent background facts (source, author, year, purpose).
@@ -276,7 +278,7 @@ def _names(items, limit=8):
     return ", ".join(names) + (f" and {extra} more" if extra > 0 else "")
 
 
-def _facts_overview(schema: list) -> dict:
+def _facts_overview(schema: list, relationships: Optional[list] = None) -> dict:
     """Detailed paragraph and key-fact points built only from computed statistics."""
     main = schema[0]
     t, cols, rows = main["name"], main["columns"], main["rows"]
@@ -300,6 +302,13 @@ def _facts_overview(schema: list) -> dict:
     if len(schema) > 1:
         first += f" The other tables are {', '.join(x['name'] for x in schema[1:])}."
     sentences.append(first)
+
+    if relationships:
+        rel_str = "; ".join(
+            f"'{r.get('left_table')}' joins '{r.get('right_table')}' on {r.get('left_column')}={r.get('right_column')}"
+            for r in relationships[:3]
+        )
+        sentences.append(f"The datasets are connected: {rel_str}.")
 
     kinds = []
     if by_kind["TEXT"]:
@@ -377,6 +386,15 @@ def _facts_overview(schema: list) -> dict:
         quality = "Missing values in " + ", ".join(f"{c['name']} ({c['missing']:,})" for c in missing_cols[:5])
     points.append({"label": "Data quality", "text": quality})
 
+    if relationships:
+        points.append({
+            "label": "Relationships",
+            "text": "; ".join(
+                f"{r.get('left_table')}.{r.get('left_column')} ⟷ {r.get('right_table')}.{r.get('right_column')} ({r.get('cardinality', 'link').replace('_', ' ')})"
+                for r in relationships[:4]
+            )
+        })
+
     uses = ["previewing and filtering rows"]
     if cats:
         uses.append("grouping and counting by category")
@@ -386,11 +404,13 @@ def _facts_overview(schema: list) -> dict:
         uses.append("finding minimums, maximums and rankings")
     if dates:
         uses.append("looking at activity over time")
+    if relationships:
+        uses.append("joining tables for cross-dataset insights")
     points.append({"label": "Good for", "text": ", ".join(uses)})
 
     return {"paragraph": " ".join(sentences), "points": points}
 
-def _fallback_briefing(schema: list) -> dict:
+def _fallback_briefing(schema: list, relationships: Optional[list] = None) -> dict:
     table = schema[0]
     t = table["name"]
     cols = table["columns"]
@@ -423,9 +443,16 @@ def _fallback_briefing(schema: list) -> dict:
         add("beginner", "Sorting", f"Show the first 10 rows of {t} sorted by {first_col}",
             "Practice sorting results.", ["ORDER BY", "LIMIT"])
 
-    if cat and num:
+    if relationships:
+        rel0 = relationships[0]
+        lt, lc = rel0.get("left_table"), rel0.get("left_column")
+        rt, rc = rel0.get("right_table"), rel0.get("right_column")
+        add("intermediate", "Cross-Table Join", f"Count records in {rt} for each {lt}",
+            f"Join {lt} and {rt} on matching {lc} to see activity per record.", ["JOIN", "COUNT()", "GROUP BY"])
+    elif cat and num:
         add("intermediate", "Group Summary", f"Average {num} for each {cat}",
             "Compare the typical value of each group.", ["GROUP BY", "AVG()"])
+
     if cat:
         add("intermediate", "Group Counts", f"Count the rows for each {cat}",
             "See how the rows are spread across categories.", ["GROUP BY", "COUNT()"])
@@ -433,9 +460,16 @@ def _fallback_briefing(schema: list) -> dict:
         add("intermediate", "Range Extremes", f"Find the minimum and maximum {num}",
             "Find the smallest and largest values in one query.", ["MIN()", "MAX()"])
 
-    if cat:
+    if relationships:
+        rel0 = relationships[0]
+        lt, lc = rel0.get("left_table"), rel0.get("left_column")
+        rt, rc = rel0.get("right_table"), rel0.get("right_column")
+        add("advanced", "Cross-Table Analysis", f"Find {lt} entries with no matching records in {rt}",
+            f"Perform a LEFT JOIN between {lt} and {rt} to identify unlinked rows.", ["LEFT JOIN", "WHERE IS NULL"])
+    elif cat:
         add("advanced", "Post-Agg Filter", f"Which {cat} values appear more than once?",
             "Filter groups after counting them.", ["HAVING", "COUNT()"])
+
     if cat and num:
         add("advanced", "Window Analysis", f"Rank rows by {num} within each {cat}",
             "Rank rows inside each group without collapsing them.", ["RANK() OVER", "PARTITION BY"])
@@ -456,7 +490,7 @@ def _fallback_briefing(schema: list) -> dict:
         "description": description,
         "classification": None,
         "insight": None,
-        "overview": _facts_overview(schema),
+        "overview": _facts_overview(schema, relationships),
         "starter_queries": cards,
         "try_asking": _derive_try_asking(cards),
         "source": "fallback",
@@ -465,11 +499,14 @@ def _fallback_briefing(schema: list) -> dict:
 
 # ---------- Gemini ----------
 
-def _ai_briefing(schema: list):
+def _ai_briefing(schema: list, relationships: Optional[list] = None):
     """Returns the briefing dict, or None if anything goes wrong (caller uses the fallback)."""
     try:
         chain = BRIEFING_PROMPT | llm
-        res = chain.invoke({"schema_json": json.dumps(schema, default=str)})
+        res = chain.invoke({
+            "schema_json": json.dumps(schema, default=str),
+            "relationships_json": json.dumps(relationships or [], default=str),
+        })
         data = _extract_json(_text(res.content))
     except Exception as e:
         print(f"Briefing generation failed: {e}")
@@ -505,7 +542,7 @@ def _ai_briefing(schema: list):
     if not try_asking:
         try_asking = _derive_try_asking(cards)
 
-    overview = _facts_overview(schema)
+    overview = _facts_overview(schema, relationships)
     raw_overview = data.get("overview") if isinstance(data.get("overview"), dict) else {}
     ai_paragraph = str(raw_overview.get("paragraph") or "").strip()
     if len(ai_paragraph) >= 80:
@@ -528,17 +565,23 @@ def _ai_briefing(schema: list):
 
 # ---------- public entry point ----------
 
-def get_briefing(target: str, refresh: bool = False) -> dict:
+def get_briefing(target: str, refresh: bool = False, relationships: Optional[list] = None) -> dict:
     engine = create_engine(target) if "://" in target else create_engine(f"sqlite:///{os.path.abspath(target)}")
     try:
         schema = collect_schema(engine)
+        if relationships is None and len(schema) > 1:
+            try:
+                from app.relationships import detect_relationships
+                relationships = detect_relationships(engine, [t["name"] for t in schema])
+            except Exception:
+                pass
     finally:
         engine.dispose()
 
     if not schema:
         raise ValueError("No tables found in this database.")
 
-    key = _schema_key(schema)
+    key = _schema_key(schema, relationships)
 
     if not refresh:
         if key in _cache:
@@ -558,9 +601,9 @@ def get_briefing(target: str, refresh: bool = False) -> dict:
                 return failed_result
 
     print("Briefing: generating")
-    result = _ai_briefing(schema) if llm else None
+    result = _ai_briefing(schema, relationships) if llm else None
     if result is None:
-        result = _fallback_briefing(schema)
+        result = _fallback_briefing(schema, relationships)
 
     if result["source"] == "ai":
         _cache[key] = result
@@ -570,5 +613,7 @@ def get_briefing(target: str, refresh: bool = False) -> dict:
         _cache[key] = result
     else:
         _fail_cache[key] = (time.time(), result)
+
+    return result
 
     return result 

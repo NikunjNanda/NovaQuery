@@ -12,6 +12,9 @@ import DatasetBriefingCard from './components/workspace/DatasetBriefingCard';
 import StarterQueriesSection from './components/workspace/StarterQueriesSection';
 import PracticeLab from './components/practice/PracticeLab';
 import LandingPage from './components/landing/LandingPage';
+import MultiUploadModal from './components/workspace/MultiUploadModal';
+import RelationshipReviewModal from './components/workspace/RelationshipReviewModal';
+import SchemaView from './components/schema/SchemaView';
 import { Layers, Upload, RefreshCw } from 'lucide-react';
 
 function WorkspaceApp({ initialQuestion, onBackToLanding }) {
@@ -46,7 +49,12 @@ function WorkspaceApp({ initialQuestion, onBackToLanding }) {
     setIsHelpOpen,
     isUploading,
     uploadError,
+    uploadStep,
+    multiUploadReview,
+    setMultiUploadReview,
     handleUploadFile,
+    handleUploadFiles,
+    handleConfirmRelationships,
   } = useNovaQuery();
 
   const {
@@ -226,69 +234,36 @@ function WorkspaceApp({ initialQuestion, onBackToLanding }) {
         </div>
       )}
 
-      {/* Tab 2: Schema Placeholder */}
+      {/* Tab 2: Schema View */}
       {activeTab === 'schema' && (
-        <div className="flex flex-col items-center justify-center p-12 bg-[#0d1322] border border-[#1a243a] rounded-2xl text-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400">
-            <Layers className="w-6 h-6" />
-          </div>
-          <h2 className="text-lg font-semibold text-slate-100">Schema View</h2>
-          <p className="text-xs text-slate-400 max-w-md">
-            Full relational schema diagrams, entity relationships, and column statistics. Coming soon.
-          </p>
-        </div>
+        <SchemaView profile={profile} />
       )}
 
       {/* Tab 3: Practice Lab */}
       {activeTab === 'practice' && <PracticeLab />}
 
-      {/* Upload Data Modal */}
-      <Modal
+      {/* Multi/Single Upload Modal */}
+      <MultiUploadModal
         isOpen={isUploadOpen}
-        onClose={() => {
-          if (!isUploading) setIsUploadOpen(false);
+        onClose={() => setIsUploadOpen(false)}
+        onUpload={(files) => handleUploadFiles(files)}
+        isUploading={isUploading}
+        uploadStep={uploadStep}
+        uploadError={uploadError}
+      />
+
+      {/* Relationship Review Modal */}
+      <RelationshipReviewModal
+        isOpen={Boolean(multiUploadReview?.open)}
+        onClose={() => setMultiUploadReview(null)}
+        reviewData={multiUploadReview}
+        onConfirm={(confirmedRels) => handleConfirmRelationships(confirmedRels)}
+        onChooseDifferentFiles={() => {
+          setMultiUploadReview(null);
+          setIsUploadOpen(true);
         }}
-        title="Upload Dataset"
-      >
-        <div className="flex flex-col gap-4">
-          <p className="text-xs text-slate-400">
-            Select a database or tabular file to load into NovaQuery. Supported formats: .db, .sqlite, .sqlite3, .sql, .csv, .xlsx, .json, .parquet.
-          </p>
-
-          {uploadError && (
-            <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-800/40 text-rose-300 text-xs font-mono leading-relaxed">
-              {uploadError}
-            </div>
-          )}
-
-          <label className={`border-2 border-dashed border-[#1a243a] hover:border-violet-500/50 rounded-xl p-8 flex flex-col items-center justify-center gap-2 transition bg-[#05080f]/50 ${isUploading ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}>
-            {isUploading ? (
-              <RefreshCw className="w-8 h-8 text-violet-400 animate-spin" />
-            ) : (
-              <Upload className="w-8 h-8 text-violet-400" />
-            )}
-            <span className="text-xs font-semibold text-slate-200">
-              {isUploading ? 'Uploading and processing file...' : 'Click to browse or drop file here'}
-            </span>
-            <span className="text-[11px] text-slate-500 font-mono">
-              Max file size 50MB
-            </span>
-            <input
-              type="file"
-              accept=".db,.sqlite,.sqlite3,.sql,.csv,.xlsx,.xls,.json,.parquet"
-              disabled={isUploading}
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  handleUploadFile(file);
-                  e.target.value = '';
-                }
-              }}
-            />
-          </label>
-        </div>
-      </Modal>
+        isConfirming={isUploading && uploadStep === 'activating'}
+      />
 
       {/* Help & Shortcuts Modal */}
       <Modal

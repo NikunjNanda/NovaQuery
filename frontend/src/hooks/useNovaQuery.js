@@ -1,5 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
-import { fetchProfile, executeQuery, uploadDatabase, runSql } from '../api';
+import {
+  fetchProfile,
+  executeQuery,
+  uploadDatabase,
+  uploadMultipleDatasets,
+  confirmRelationships,
+  runSql,
+} from '../api';
 
 /**
  * Primary state management hook for NovaQuery.
@@ -18,6 +25,8 @@ export function useNovaQuery() {
   // Upload state
   const [isUploading, setIsUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const [uploadStep, setUploadStep] = useState('idle'); // 'idle' | 'uploading' | 'detecting'
+  const [multiUploadReview, setMultiUploadReview] = useState(null);
 
   // Query editor state
   const [queryText, setQueryText] = useState('');
@@ -137,6 +146,131 @@ export function useNovaQuery() {
       setIsUploading(false);
     }
   }, [reloadProfile]);
+
+  /**
+   * Unified Upload: handles 1 file via uploadDatabase or 2-6 files via uploadMultipleDatasets.
+   */
+  const handleUploadFiles = useCallback(async (files) => {
+    if (!files || files.length === 0) return;
+
+    if (files.length === 1) {
+      return handleUploadFile(files[0]);
+    }
+
+    setIsUploading(true);
+    setUploadStep('uploading');
+    setUploadError(null);
+
+    // Transition indicator to relationship detection
+    const detectTimer = setTimeout(() => {
+      setUploadStep('detecting');
+    }, 1000);
+
+    try {
+      const res = await uploadMultipleDatasets(files);
+      clearTimeout(detectTimer);
+      setIsUploading(false);
+      setUploadStep('idle');
+
+      if (res && res.success) {
+        setIsUploadOpen(false);
+        setUploadError(null);
+
+        // Open Relationship Review panel
+        setMultiUploadReview({
+          open: true,
+          dbPath: res.db_path,
+          workspaceId: res.workspace_id,
+          filename: res.original_filename,
+          tables: res.tables || [],
+          tableColumns: res.table_columns || {},
+          relationships: res.relationships || [],
+          unlinkedError: false,
+          message: null,
+        });
+        return res;
+      }
+    } catch (err) {
+      clearTimeout(detectTimer);
+      setIsUploading(false);
+      setUploadStep('idle');
+
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+
+      if (status === 422 && typeof detail === 'object') {
+        // Enforce "must share fields": display friendly prompt with column list & manual linker
+        setIsUploadOpen(false);
+        setMultiUploadReview({
+          open: true,
+          dbPath: detail.db_path,
+          workspaceId: detail.workspace_id,
+          filename: `${detail.tables?.length || files.length} datasets`,
+          tables: detail.tables || [],
+          tableColumns: detail.table_columns || {},
+          relationships: [],
+          unlinkedError: true,
+          message: detail.message || "These datasets do not share any common column, so they cannot be queried together.",
+        });
+      } else {
+        const errorMsg =
+          (typeof detail === 'string' ? detail : null) ||
+          err.response?.data?.error ||
+          err.message ||
+          'Multi-file upload failed.';
+        setUploadError(errorMsg);
+      }
+    }
+  }, [handleUploadFile]);
+
+  /**
+   * Confirms workspace relationships and activates the database
+   */
+  const handleConfirmRelationships = useCallback(async (relationshipsToConfirm) => {
+    if (!multiUploadReview) return;
+    setIsUploading(true);
+    setUploadStep('activating');
+    try {
+      const res = await confirmRelationships(
+        multiUploadReview.dbPath,
+        relationshipsToConfirm,
+        multiUploadReview.workspaceId
+      );
+
+      if (res && res.success) {
+        setDbPath(res.db_path);
+        setActiveFile({ name: res.original_filename || multiUploadReview.filename });
+
+        // Reset workspace query state
+        setQueryResult(null);
+        setQueryError(null);
+        setQueryText('');
+        setResponseTime(null);
+        setHistory([]);
+        setActiveHistoryId(null);
+        setBannerDismissed(false);
+
+        await reloadProfile(res.db_path);
+
+        setMultiUploadReview(null);
+        setIsUploadOpen(false);
+        setUploadError(null);
+        return res;
+      } else {
+        throw new Error(res?.detail || 'Failed to confirm relationships.');
+      }
+    } catch (err) {
+      const errorMsg =
+        err.response?.data?.detail ||
+        err.response?.data?.error ||
+        err.message ||
+        'Failed to confirm relationships.';
+      setUploadError(errorMsg);
+    } finally {
+      setIsUploading(false);
+      setUploadStep('idle');
+    }
+  }, [multiUploadReview, reloadProfile]);
 
   /**
    * Real Query Execution wired to executeQuery in src/api.js
@@ -317,7 +451,12 @@ export function useNovaQuery() {
     setIsHelpOpen,
     isUploading,
     uploadError,
+    uploadStep,
+    multiUploadReview,
+    setMultiUploadReview,
     handleUploadFile,
+    handleUploadFiles,
+    handleConfirmRelationships,
   };
 }
 

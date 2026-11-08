@@ -19,12 +19,33 @@ from langchain_core.prompts import PromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.schemas import Lesson, LessonStep, ModifyIdea, QueryResponse
-from app.security import SecurityException, validate_sql_security
+from app.security import SecurityException, validate_sql_security, validate_tables_in_workspace
 
 load_dotenv()
 
 DEFAULT_DB_PATH = "company.db"
 MAX_ROWS = 1000  # cap rows sent to the browser
+
+def format_relationships_context(relationships: Optional[list]) -> str:
+    """Formats detected relationships and JOIN guidelines for LLM prompting."""
+    if not relationships:
+        return ""
+    lines = ["RELATIONSHIPS (JOIN keys between tables):"]
+    for r in relationships:
+        if isinstance(r, dict):
+            left_tbl = r.get("left_table")
+            left_col = r.get("left_column")
+            right_tbl = r.get("right_table")
+            right_col = r.get("right_column")
+            card = r.get("cardinality", "")
+            card_str = f" ({card})" if card else ""
+            lines.append(f"- {left_tbl}.{left_col} -> {right_tbl}.{right_col}{card_str}")
+    lines.append("")
+    lines.append("Multi-Table Guidelines:")
+    lines.append("- Use JOINs along the listed relationships ONLY.")
+    lines.append("- Always qualify column names with table names (e.g., table.column) to prevent ambiguous column errors.")
+    lines.append("- Avoid cartesian products (never use comma-separated FROM tables without an explicit JOIN ON).")
+    return "\n".join(lines)
 
 # Initialize Gemini LLM
 # (no temperature setting: gemini-3.6-flash ignores it and prints a warning)
@@ -48,6 +69,7 @@ CORRECTION_PROMPT = PromptTemplate.from_template(
     {context}
 
     Please inspect the error and regenerate a corrected SQL query that matches the actual database schema.
+    If joining tables, ensure you only use the explicit relationships listed above, qualify column names with table names, and avoid cartesian products.
     Return ONLY the raw SQL query with no markdown formatting or commentary."""
 )
 
@@ -68,7 +90,7 @@ EXPLANATION_PROMPT = PromptTemplate.from_template(
         "suggested_queries": ["Follow-up question 1?", "Follow-up question 2?", "Follow-up question 3?"],
         "lesson": {{
             "translation": "One or two plain-English sentences translating the whole query.",
-            "step_explanations": ["For each clause, in the SAME order and count as the clauses above: 2-4 sentences covering what the clause does, WHY it is needed in this query, and what happens to the rows at this point."],
+            "step_explanations": ["For each clause, in the SAME order and count as the clauses above: 2-4 sentences covering what the clause does, WHY it is needed in this query, and what happens to the rows at this point. For JOIN clauses, explain in plain English which tables are joined and on which columns, and why."],
             "execution_order": ["Short numbered steps (for example '1. FROM sheet1: read every row of the table') describing the order in which the database actually runs the clauses of THIS query. Only mention clauses that exist."],
             "how_to_read": "2-3 sentences on how to read the result: what each returned column means and what one row represents.",
             "concepts": ["#aggregation", "#GROUP_BY"],
@@ -80,7 +102,7 @@ EXPLANATION_PROMPT = PromptTemplate.from_template(
     }}
 
     Rules: use only columns and tables from the schema, and use their real names in the explanations.
-    Define each SQL term the first time you use it (for example aggregate, group, alias) in simple words.
+    Define each SQL term the first time you use it (for example aggregate, group, alias, join) in simple words.
     Give 2-3 modify_ideas and 2-4 concepts. Do not use markdown formatting inside the text values."""
 )
 
@@ -447,6 +469,14 @@ def _make_lesson(raw_lesson: dict, steps: list) -> Lesson:
     )
 
 
+def _format_step_explanation(clause: str, sql_frag: str, expl: str) -> str:
+    if expl:
+        return expl
+    if clause == "JOIN":
+        return f"Joins data matching on {sql_frag}, combining related records between tables."
+    return ""
+
+
 def generate_teacher_content(question: str, sql_query: str, schema: str, postgres_sql: Optional[str] = None) -> dict:
     """Returns explanation, purpose, suggestions and lessons (SQLite + PostgreSQL). Never raises."""
     steps = build_clause_steps(sql_query)
@@ -462,10 +492,24 @@ def generate_teacher_content(question: str, sql_query: str, schema: str, postgre
         "purpose": None,
         "suggested_queries": default_suggestions,
         "lesson": Lesson(
-            steps=[LessonStep(clause=x["clause"], sql=x["sql"]) for x in steps]
+            steps=[
+                LessonStep(
+                    clause=x["clause"],
+                    sql=x["sql"],
+                    explanation=_format_step_explanation(x["clause"], x["sql"], ""),
+                )
+                for x in steps
+            ]
         ) if steps else None,
         "lesson_postgres": Lesson(
-            steps=[LessonStep(clause=x["clause"], sql=x["sql"]) for x in pg_steps]
+            steps=[
+                LessonStep(
+                    clause=x["clause"],
+                    sql=x["sql"],
+                    explanation=_format_step_explanation(x["clause"], x["sql"], ""),
+                )
+                for x in pg_steps
+            ]
         ) if pg_steps else None,
         "postgres_notes": None,
     }
@@ -498,7 +542,11 @@ def generate_teacher_content(question: str, sql_query: str, schema: str, postgre
         return str(texts[i]) if i < len(texts) and texts[i] else ""
 
     lesson_steps = [
-        LessonStep(clause=x["clause"], sql=x["sql"], explanation=text_at(step_texts, i))
+        LessonStep(
+            clause=x["clause"],
+            sql=x["sql"],
+            explanation=_format_step_explanation(x["clause"], x["sql"], text_at(step_texts, i)),
+        )
         for i, x in enumerate(steps)
     ]
     lesson = _make_lesson(raw_lesson, lesson_steps)
@@ -507,7 +555,11 @@ def generate_teacher_content(question: str, sql_query: str, schema: str, postgre
     lesson_pg, notes = None, None
     if pg_steps and not pg_differs:
         lesson_pg = _make_lesson(raw_lesson, [
-            LessonStep(clause=x["clause"], sql=x["sql"], explanation=text_at(step_texts, i))
+            LessonStep(
+                clause=x["clause"],
+                sql=x["sql"],
+                explanation=_format_step_explanation(x["clause"], x["sql"], text_at(step_texts, i)),
+            )
             for i, x in enumerate(pg_steps)
         ])
         notes = ["This query needs no changes in PostgreSQL: exactly the same SQL works in both databases."]
@@ -517,8 +569,13 @@ def generate_teacher_content(question: str, sql_query: str, schema: str, postgre
         same_shape = len(pg_steps) == len(steps)  # then a missing PostgreSQL explanation can reuse the SQLite one
         lesson_pg = _make_lesson(raw_lesson, [
             LessonStep(
-                clause=x["clause"], sql=x["sql"],
-                explanation=text_at(pg_texts, i) or (text_at(step_texts, i) if same_shape else ""),
+                clause=x["clause"],
+                sql=x["sql"],
+                explanation=_format_step_explanation(
+                    x["clause"],
+                    x["sql"],
+                    text_at(pg_texts, i) or (text_at(step_texts, i) if same_shape else ""),
+                ),
             )
             for i, x in enumerate(pg_steps)
         ])
@@ -620,6 +677,7 @@ def run_natural_language_query(
     history: Optional[list] = None,   # previous [{"question", "sql"}] turns, used for follow-up questions
     include_teaching: bool = True,    # False skips the explanation/lesson call (used by the benchmark)
     use_cache: bool = True,           # False always asks Gemini (used by the benchmark)
+    relationships: Optional[list] = None,
 ):
     """
     Generates, validates, and executes a SQL query against a SQLite database.
@@ -639,8 +697,22 @@ def run_natural_language_query(
     # 1. Check DB connection / schema
     try:
         db = SQLDatabase.from_uri(f"sqlite:///{db_path}")
+        usable_tables = set(db.get_usable_table_names())
     except Exception as db_init_error:
         return _error_response(f"Failed to initialize database schema at '{db_path}': {db_init_error}")
+
+    # Auto-detect relationships if not supplied and workspace has multiple tables
+    if relationships is None and len(usable_tables) > 1:
+        try:
+            from app.relationships import detect_relationships
+            from sqlalchemy import create_engine
+            eng = create_engine(f"sqlite:///{Path(db_path).resolve()}")
+            try:
+                relationships = detect_relationships(eng, list(usable_tables))
+            finally:
+                eng.dispose()
+        except Exception as e:
+            print(f"Relationship auto-detection fallback failed: {e}")
 
     # 2. Turn follow-ups ("now only for setosa") into complete questions (no call without history)
     user_question = _standalone_question(user_question, history)
@@ -656,8 +728,12 @@ def run_natural_language_query(
     if not llm:
         return handle_fallback_query(user_question, db_path)
 
-    # 5. Tips and real data facts (exact spellings, date formats) so the model writes better SQL
+    # 5. Tips, data facts, and multi-table relationships so the model writes better SQL
     extra_context = _query_context(db_path)
+    rel_context = format_relationships_context(relationships)
+    if rel_context:
+        extra_context = (rel_context + "\n\n" + extra_context).strip() if extra_context else rel_context
+
     generation_question = f"{user_question}\n\n{extra_context}" if extra_context else user_question
 
     chain = create_sql_query_chain(llm, db, k=100)
@@ -688,6 +764,7 @@ def run_natural_language_query(
 
             # Security AST check BEFORE execution
             validate_sql_security(cleaned_sql)
+            validate_tables_in_workspace(cleaned_sql, allowed_tables=usable_tables)
 
             # Execute (read-only, connection always closed)
             rows, truncated = _execute_readonly(db_path, cleaned_sql)

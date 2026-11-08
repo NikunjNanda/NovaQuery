@@ -27,6 +27,27 @@ export const uploadDatabase = async (file) => {
   return response.data;
 };
 
+export const uploadMultipleDatasets = async (files) => {
+  const formData = new FormData();
+  files.forEach((file) => {
+    formData.append('files', file);
+  });
+
+  const response = await axios.post(`${API_BASE}/upload-multiple`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  });
+  return response.data;
+};
+
+export const confirmRelationships = async (dbPath, relationships, workspaceId = null) => {
+  const response = await axios.post(`${API_BASE}/confirm-relationships`, {
+    db_path: dbPath,
+    workspace_id: workspaceId,
+    relationships,
+  });
+  return response.data;
+};
+
 export const connectLiveUri = async (connectionString) => {
   const response = await axios.post(`${API_BASE}/connect-uri`, {
     connection_string: connectionString

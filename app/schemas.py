@@ -89,7 +89,8 @@ class BriefingResponse(BaseModel):
 
 def run_user_sql(sql: str, db_path: str) -> dict:
     import sqlite3
-    from app.security import validate_sql_security, SecurityException
+    from pathlib import Path
+    from app.security import validate_sql_security, validate_tables_in_workspace, SecurityException
 
     if not sql or not sql.strip():
         return {
@@ -102,8 +103,22 @@ def run_user_sql(sql: str, db_path: str) -> dict:
             "explanation": "",
         }
 
+    usable_tables = set()
+    try:
+        uri = Path(db_path).resolve().as_uri() + "?mode=ro"
+        conn_chk = sqlite3.connect(uri, uri=True)
+        try:
+            cur = conn_chk.cursor()
+            cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            usable_tables = {r[0] for r in cur.fetchall()}
+        finally:
+            conn_chk.close()
+    except Exception:
+        pass
+
     try:
         validate_sql_security(sql)
+        validate_tables_in_workspace(sql, allowed_tables=usable_tables)
     except SecurityException as se:
         return {
             "success": False,

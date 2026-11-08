@@ -91,4 +91,43 @@ JUNK = [
 @pytest.mark.parametrize("sql", JUNK)
 def test_empty_or_invalid_input_is_rejected_cleanly(sql):
     with pytest.raises(SecurityException):
-        validate_sql_security(sql) 
+        validate_sql_security(sql)
+
+
+# ---------- workspace table whitelist & system table blocking tests ----------
+from app.security import validate_tables_in_workspace
+
+
+def test_workspace_table_whitelist():
+    allowed = {"customers", "orders"}
+
+    # Allowed single table
+    assert validate_tables_in_workspace("SELECT * FROM customers", allowed) is True
+
+    # Allowed join
+    assert validate_tables_in_workspace(
+        "SELECT c.name, o.amount FROM customers c JOIN orders o ON c.id = o.customer_id",
+        allowed,
+    ) is True
+
+    # CTE alias allowed
+    assert validate_tables_in_workspace(
+        "WITH top_cust AS (SELECT id FROM customers) SELECT * FROM top_cust",
+        allowed,
+    ) is True
+
+    # Disallowed table outside workspace
+    with pytest.raises(SecurityException) as exc_info:
+        validate_tables_in_workspace("SELECT * FROM passwords", allowed)
+    assert "passwords" in str(exc_info.value)
+
+    # Disallowed table in JOIN
+    with pytest.raises(SecurityException) as exc_info:
+        validate_tables_in_workspace("SELECT * FROM customers c JOIN secret_salaries s ON c.id = s.emp_id", allowed)
+    assert "secret_salaries" in str(exc_info.value)
+
+    # SQLite system tables blocked
+    with pytest.raises(SecurityException) as exc_info:
+        validate_tables_in_workspace("SELECT name FROM sqlite_master", allowed)
+    assert "system table" in str(exc_info.value).lower()
+ 
